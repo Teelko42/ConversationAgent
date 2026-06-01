@@ -4,6 +4,15 @@ Conductor review of all five lanes. Each row is a real cross-lane disagreement,
 gap, or seam; the **Resolution** column is the binding decision (propagated into
 `DECISIONS.md` D13–D16 where it changes a shared convention).
 
+> **⚠ Refined post-validation (2026-06-01).** The adversarial review
+> (`09-validation-review.md`) found that "resolved" here too often meant
+> "owner assigned + prose arrow," not "designed" — three seams (D16 adapter,
+> supersede propagation, `kg_delta` resync) and the consent model needed real
+> field-level/state design, and two headline numbers (latency, margin) did not
+> survive their own arithmetic. Those gaps are now closed in docs 10–13 and
+> ratified as **D16-amendment, D17–D20, INV-8/9** in `DECISIONS.md`. The "net:
+> internally consistent" claim below was overstated; read it together with doc 09.
+
 ## A. Data-contract seams
 
 | # | Conflict | Lanes | Resolution |
@@ -40,3 +49,11 @@ gap, or seam; the **Resolution** column is the binding decision (propagated into
 escalated to the risk assessment; all technical seams resolve via adapters and
 ownership assignments already anticipated by the lanes. The blueprint is
 internally consistent.
+
+> **⚠ Corrected (2026-06-01).** This "internally consistent" net is overstated
+> (see doc 09). C-1's adapter silently dropped `rev`/`supersedes` (→ D16
+> amendment, doc 10); C-7's resync was a prose arrow with no schema (→ INV-8,
+> doc 10); C-9's unit economics do not reconcile at the stated $2.00/hr (→ doc 11,
+> realistic ~$3.5/hr MVP); and the per-session consent assumption is a per-speaker
+> legal exposure (→ D18, doc 13). The seams were *assigned*, not yet *designed* —
+> they are now designed in docs 10–13.

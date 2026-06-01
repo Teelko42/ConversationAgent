@@ -63,6 +63,14 @@ Haiku extraction ~680 ms p95, Sonnet first token ~700 ms → **p50 ~2.5 s,
 p95 ~4.5 s** speech→enriched card. Deep dives stream over ≤10 s. No part of the
 MVP needs GPUs or multi-region to hit the budget.
 
+> **⚠ Superseded by D17 / doc 12 (2026-06-01).** This "~2.5 s" is computed from
+> the 300 ms *partial*, but §5 below commits to **extracting on finals only** —
+> and a final is ~2.0 s after audio-end (team-02 §6). That is an internal
+> contradiction (§4 vs §5). Measured from when the concept word is *spoken*,
+> finals-only is ~4.6 s p50 / 9.3 s p95 — it fails the wedge metric; the committed
+> fix is speculative-on-stabilized-partial (D17). It also omits the two Kinesis
+> hops + provider RTT. See `12-latency-budget.md`.
+
 ## 5. MVP cost posture (ties to RISK-1 / C-9)
 
 At ~$2.00/session-hour (F04 MVP cost model, dominated by STT minutes + LLM
@@ -71,7 +79,17 @@ a funded land-grab phase. Controls already in the MVP:
 - Free hard-capped at 300 min/mo, **Haiku-only** routing (LLM gateway, D15).
 - Pro gets a **bounded** monthly hour pool + usage-based overage (not unlimited).
 - Prompt caching + tiered routing + extracting on finals only (not partials).
+  *(Superseded by **D17**: committed hot path is speculative-on-stabilized-partial,
+  reconciled on final via INV-8; finals-only is the fallback. See doc 12.)*
 Margin target (65%+) is a **Year-1-scale** goal (doc 04), not an MVP goal.
+
+> **⚠ Corrected by doc 11 (2026-06-01).** The $2.00/session-hr above is understated:
+> rebuilt bottom-up, MVP is **~$3.5/hr** (LLM ~$3.33/hr alone; infra dominates at
+> MVP volume, not inference). At $3.5/hr the documented Pro margin is
+> negative-to-thin, the advertised 25-hr fair-use cap is unfundable, and **no
+> overage rate is set** — fix is a bounded hour pool + **$3/hr overage**, with the
+> land-grab funded to ~$5–8M. Framing 65% as a Year-1 goal is correct; the MVP
+> number was not. Full model in `11-cost-model.md`.
 
 ## 6. MVP exit criteria (what "done" looks like)
 

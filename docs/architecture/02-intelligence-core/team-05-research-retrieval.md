@@ -204,6 +204,14 @@ time-boxing, reranker batching, regional vector indices.
 - **Privacy (D10):** the **privacy gate** in query planning is the hard line —
   sensitive/PII concepts never leave the tenant boundary to the web (INV-6).
   No-audio-retention mode unaffected (we index text/derived only).
+  > **⚠ Hardened by D20 / doc 13 (2026-06-01).** The gate keys on `consent_class`
+  > and `pii_present`, which this lane **assumed already set** (A01) — but nothing
+  > computed `pii_present` and the natural default was **fail-open**. D20 adds a
+  > named layered PII/PHI classifier (deterministic + NER + Comprehend-Medical/
+  > in-VPC), **recall ≥0.95 PII / ≥0.98 PHI**, and a **fail-closed** default
+  > (missing/uncertain ⇒ treat as sensitive). Also **INV-9**: the cross-session
+  > evidence cache must hold **no personal data** (else it escapes the DSAR
+  > cascade — M-9). See `00-integration/13-consent-and-privacy-redesign.md`.
 - **Tenant isolation (INV-7):** internal-doc and session indices namespaced by
   `tenant_id`; ANN + BM25 queries scoped; verified no cross-tenant retrieval.
 - **Injection safety:** all retrieved content is data; sanitized; the verifier
@@ -263,6 +271,8 @@ licensing required, MAN-F02-004); multilingual retrieval.
 ## 9. Assumptions
 
 - A01: Team 4 issues structured retrieval requests with `consent_class` set.
+  *(⚠ This assumption was the H-13 fail-open root cause — `consent_class`/`pii_present`
+  must be computed and fail-closed, not assumed-set. See D20 / doc 13.)*
 - A02: Team 3's embeddings/index are reusable for session-memory retrieval
   (shared embedding model).
 - A03: A web-search vendor account/keys will be provisioned (MAN-F02-001).

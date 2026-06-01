@@ -76,6 +76,19 @@ plus control plane (auth, tenant, billing, consent).
 
 ## 3. Consent management (D10 — two-party consent)
 
+> **⚠ Superseded by D18–D19 / doc 13 (2026-06-01).** The per-session consent
+> state machine in §3.2–§3.3 (one terminal `consented` state, gated once) is a
+> per-speaker **legal exposure**: it has no transition for a late-joiner / new
+> speaker mid-session, and revocation kills the whole session rather than one
+> speaker — a wiretap risk in all-party states. Consent is re-modeled as a
+> **per-speaker predicate** (`SpeakerConsent` per `(session, speaker_id)` +
+> a continuously-evaluated `may_capture()`), with `speaker_detected → re-gate`,
+> per-speaker revocation, and the constraint that **all-party capture requires
+> per-track audio or blocks** (you cannot mask one voice in a mixed stream). The
+> meeting-bot is gated to single-party jurisdictions at MVP (D19), and the
+> "audio not stored" badge is split from sub-processor disclosure. Binding design:
+> `00-integration/13-consent-and-privacy-redesign.md`.
+
 ### 3.1 Why this is hard and central
 
 Recording conversations triggers **two-party (all-party) consent laws** in many

@@ -72,6 +72,15 @@ flowchart TB
 **Total speech→first-useful-UI: p50 ≤ 3 s, p95 ≤ 5 s** (D07), achieved via
 streaming at every stage, speculative prefetch on partials, and prompt caching.
 
+> **⚠ Superseded by D17 / doc 12 (2026-06-01).** This per-stage table does not
+> sum to 3 s (500+800+700+1000+300 = 3300 ms) and omits the EventBus hops (×2),
+> provider RTT, and prompt-cache miss. It also chains off the 800 ms *partial*
+> while step 3 commits to extracting on *finals* (~2.0 s). The rebuilt budget —
+> with p50+p95 columns that sum, explicit bus/RTT/cache lines, and a binding
+> **speculative-on-stabilized-partial** trigger (D17) keyed to when the word is
+> *spoken* (not utterance-end) — is in `12-latency-budget.md`. The live-caption
+> path holds; the concept-card path is what the rebuild fixes.
+
 ## 3. Layer ownership (who owns what, no overlap)
 
 | Layer | Lane / teams | Responsibility |
@@ -116,6 +125,15 @@ streaming at every stage, speculative prefetch on partials, and prompt caching.
 All carry the D06 envelope (`tenant_id`, `session_id`, `seq`, monotonic
 timestamps). Ordering/idempotency: per-session ordered stream (D13), dedup on
 `(id, revision)` / `(segment_id, rev)`, higher revision supersedes.
+
+> **⚠ Refined by doc 10 / INV-8 (2026-06-01).** "Higher revision supersedes" is
+> necessary but not sufficient: the F01→F02 adapter must pass `rev`/`supersedes`
+> through (it originally dropped them), supersede/correction must propagate to
+> re-extract or **retract** citing artifacts (new `ConceptCard` `retracted`
+> state), and `kg_delta` resync needs the `kg_snapshot`/`kg_resync_request`
+> schemas + a `delta_seq`↔bus-`Position` index. Field-level contracts in
+> `10-seam-contracts.md`. Note also the per-class `seq` counters are independent
+> (not one global watermark) — gap detection is per message class.
 
 ## 6. Cross-cutting principles
 

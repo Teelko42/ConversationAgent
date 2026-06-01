@@ -75,6 +75,12 @@ verification prompts — never for the explanation prose itself.
   style guide, and the **stable conversation summary** are placed in cacheable
   prompt prefixes (Claude prompt caching) so only the per-card delta is fresh
   tokens — major latency + cost win on the hot path (D04/D07).
+  > **⚠ Refined by doc 12 (H-3, 2026-06-01).** The 1000 ms first-token budget
+  > assumes a *warm* cache, but the rolling summary (refreshed by the §1.5 Haiku
+  > job) sits in the cached prefix → each refresh evicts it → miss. Fix: **layered
+  > cache breakpoints** — stable prefix in a long-lived block, volatile summary in
+  > its **own later** block (refresh costs ~+200 ms, not ~+600 ms) — plus a
+  > keep-warm ping and a cold-first-card SLO exemption. See `12-latency-budget.md`.
 - **Constrained output.** Explanations emit a JSON-shaped structure (tool/JSON
   mode) matching `ConceptCard.explanation`, so fields are renderable without
   post-parsing and claims are individually attributable.
