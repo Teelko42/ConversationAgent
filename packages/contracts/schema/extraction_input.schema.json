@@ -1,0 +1,137 @@
+{
+  "$ref": "#/definitions/extraction_input",
+  "definitions": {
+    "extraction_input": {
+      "type": "object",
+      "properties": {
+        "segment_id": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "tenant_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "text": {
+          "type": "string"
+        },
+        "lang": {
+          "type": "string"
+        },
+        "is_final": {
+          "type": "boolean"
+        },
+        "rev": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "supersedes": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "clock": {
+          "type": "string",
+          "const": "media"
+        },
+        "t_start_us": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "t_end_us": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "speaker_id": {
+          "type": "string"
+        },
+        "speaker_label": {
+          "type": "string"
+        },
+        "speaker_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "participant_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "confidence_band": {
+          "type": "string",
+          "enum": [
+            "high",
+            "medium",
+            "low"
+          ]
+        },
+        "consent_mode": {
+          "type": "string",
+          "enum": [
+            "store_audio",
+            "no_audio_retention",
+            "transcript_only"
+          ]
+        },
+        "consent_id": {
+          "type": "string"
+        },
+        "pii_redacted_upstream": {
+          "type": "boolean"
+        },
+        "consent_class": {
+          "type": "string",
+          "enum": [
+            "standard",
+            "sensitive"
+          ]
+        },
+        "pii_present": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "segment_id",
+        "session_id",
+        "tenant_id",
+        "seq",
+        "text",
+        "lang",
+        "is_final",
+        "rev",
+        "supersedes",
+        "clock",
+        "t_start_us",
+        "t_end_us",
+        "speaker_id",
+        "speaker_label",
+        "speaker_confidence",
+        "participant_id",
+        "confidence",
+        "confidence_band",
+        "consent_mode",
+        "consent_id",
+        "pii_redacted_upstream",
+        "consent_class",
+        "pii_present"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "@aizen/adapter-d16",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Seam A (doc 10 §1) — the pure F01→F02 ingress adapter. Maps TranscriptSegment → ExtractionInput; carries rev/supersedes; stamps consent fail-closed.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": { "build": "tsc -b" },
+  "dependencies": {
+    "@aizen/contracts": "workspace:*"
+  }
+}

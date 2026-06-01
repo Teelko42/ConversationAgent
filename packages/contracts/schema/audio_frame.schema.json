@@ -1,0 +1,187 @@
+{
+  "$ref": "#/definitions/audio_frame",
+  "definitions": {
+    "audio_frame": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "producer_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "emitted_at": {
+          "type": "integer"
+        },
+        "start_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "session_start_at": {
+          "type": "integer"
+        },
+        "codec": {
+          "type": "string",
+          "enum": [
+            "pcm_s16le",
+            "opus",
+            "flac"
+          ]
+        },
+        "sample_rate_hz": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "channels": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "samples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "payload": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "payload_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "mic",
+                "system_audio",
+                "meeting_bot",
+                "meeting_sdk",
+                "virtual_device",
+                "upload"
+              ]
+            },
+            "platform": {
+              "type": "string",
+              "enum": [
+                "web",
+                "desktop",
+                "mobile_ios",
+                "mobile_android",
+                "server"
+              ]
+            },
+            "meeting_provider": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "zoom",
+                    "teams",
+                    "meet",
+                    "webex",
+                    "generic_sip"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "channel_role": {
+              "type": "string",
+              "enum": [
+                "local_participant",
+                "remote_mix",
+                "remote_participant",
+                "loopback_system"
+              ]
+            },
+            "participant_hint": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "platform",
+            "meeting_provider",
+            "channel_role",
+            "participant_hint"
+          ],
+          "additionalProperties": false
+        },
+        "consent": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "store_audio",
+                "no_audio_retention",
+                "transcript_only"
+              ]
+            },
+            "consent_id": {
+              "type": "string"
+            },
+            "redaction_pending": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "mode",
+            "consent_id",
+            "redaction_pending"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema_version",
+        "tenant_id",
+        "session_id",
+        "seq",
+        "producer_id",
+        "emitted_at",
+        "start_ms",
+        "duration_ms",
+        "session_start_at",
+        "codec",
+        "sample_rate_hz",
+        "channels",
+        "samples",
+        "payload",
+        "payload_ref",
+        "source",
+        "consent"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

@@ -1,0 +1,63 @@
+{
+  "$ref": "#/definitions/consent_context",
+  "definitions": {
+    "consent_context": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "jurisdiction_mode": {
+          "type": "string",
+          "enum": [
+            "single-party",
+            "all-party"
+          ]
+        },
+        "consent_class": {
+          "type": "string",
+          "enum": [
+            "standard",
+            "sensitive"
+          ]
+        },
+        "pii_present": {
+          "type": "boolean"
+        },
+        "disclosure_scope": {
+          "type": "string",
+          "enum": [
+            "self_host",
+            "third_party_stt",
+            "third_party_stt_llm"
+          ]
+        },
+        "per_speaker": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "enum": [
+              "detected",
+              "pending",
+              "consented",
+              "refused",
+              "revoked",
+              "exempt"
+            ]
+          }
+        }
+      },
+      "required": [
+        "session_id",
+        "jurisdiction_mode",
+        "consent_class",
+        "pii_present",
+        "disclosure_scope",
+        "per_speaker"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

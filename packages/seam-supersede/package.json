@@ -1,0 +1,13 @@
+{
+  "name": "@aizen/seam-supersede",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Seam B (doc 10 §2 / INV-8) — supersede/correction propagation: provenance index, re-extract/retract algorithm, citation rewrite, INV-8 guard.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": { "build": "tsc -b" },
+  "dependencies": {
+    "@aizen/contracts": "workspace:*"
+  }
+}

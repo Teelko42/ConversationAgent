@@ -1,1 +1,22 @@
 .claudetrees/
+.claude/
+
+# Node / TypeScript
+node_modules/
+dist/
+*.tsbuildinfo
+.vitest/
+coverage/
+*.log
+.DS_Store
+
+# Generated JSON Schema is committed (it's the registry artifact); build output is not
+
+# Terraform (infra/)
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+!example.tfvars
+.terraform.lock.hcl

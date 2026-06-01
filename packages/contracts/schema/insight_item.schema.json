@@ -1,0 +1,152 @@
+{
+  "$ref": "#/definitions/insight_item",
+  "definitions": {
+    "insight_item": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "tenant_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "insight_type": {
+          "type": "string",
+          "enum": [
+            "action_item",
+            "decision",
+            "open_question",
+            "risk",
+            "commitment"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "resolved",
+            "superseded",
+            "dismissed"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "normalized_text": {
+          "type": "string"
+        },
+        "owner_speaker_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "raised_by_speaker_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "due": {
+          "type": "object",
+          "properties": {
+            "raw": {
+              "type": "string"
+            },
+            "resolved_iso": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": [
+            "raw",
+            "resolved_iso",
+            "confidence"
+          ],
+          "additionalProperties": false
+        },
+        "evidence_segment_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "first_seen_t_us": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "graph_node_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "related_concept_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "salience": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "consent_class": {
+          "type": "string",
+          "enum": [
+            "standard",
+            "sensitive"
+          ]
+        },
+        "pii_present": {
+          "type": "boolean"
+        },
+        "superseded_by_segment_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "session_id",
+        "tenant_id",
+        "insight_type",
+        "status",
+        "text",
+        "owner_speaker_id",
+        "evidence_segment_ids",
+        "first_seen_t_us",
+        "consent_class",
+        "pii_present"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

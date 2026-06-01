@@ -1,0 +1,285 @@
+{
+  "$ref": "#/definitions/concept_card",
+  "definitions": {
+    "concept_card": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "skeleton",
+            "enriched",
+            "deep",
+            "error",
+            "retracted"
+          ]
+        },
+        "session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "tenant_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "surface_form": {
+          "type": "string"
+        },
+        "canonical_name": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "topic",
+            "concept",
+            "acronym",
+            "entity_person",
+            "entity_org",
+            "entity_product",
+            "entity_location",
+            "entity_financial_instrument",
+            "entity_legal_ref",
+            "entity_medical",
+            "event",
+            "metric",
+            "jargon_term",
+            "reference"
+          ]
+        },
+        "domain": {
+          "type": "string"
+        },
+        "salience": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "novelty": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "definition_short": {
+          "type": "string"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "citation_id": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "transcript",
+                  "web",
+                  "internal_doc",
+                  "model_parametric"
+                ]
+              },
+              "transcript_segment_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "url": {
+                "type": "string"
+              },
+              "doc_id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "snippet": {
+                "type": "string"
+              },
+              "retrieved_at": {
+                "type": "string"
+              },
+              "trust_tier": {
+                "type": "string",
+                "enum": [
+                  "T1",
+                  "T2",
+                  "T3",
+                  "T4"
+                ]
+              },
+              "support_score": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            },
+            "required": [
+              "citation_id",
+              "type"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "graph_node_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "related_concept_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "first_mention": {
+          "type": "object",
+          "properties": {
+            "segment_id": {
+              "type": "string"
+            },
+            "t_start_us": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "speaker_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "segment_id",
+            "t_start_us",
+            "speaker_id"
+          ],
+          "additionalProperties": false
+        },
+        "mention_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mention_segment_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "grounding": {
+          "type": "object",
+          "properties": {
+            "grounded": {
+              "type": "boolean"
+            },
+            "groundedness_score": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "verification_state": {
+              "type": "string",
+              "enum": [
+                "unverified",
+                "verified",
+                "contested",
+                "refuted"
+              ]
+            },
+            "hallucination_flags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "grounded",
+            "groundedness_score",
+            "verification_state",
+            "hallucination_flags"
+          ],
+          "additionalProperties": false
+        },
+        "consent_class": {
+          "type": "string",
+          "enum": [
+            "standard",
+            "sensitive"
+          ]
+        },
+        "pii_present": {
+          "type": "boolean"
+        },
+        "retraction": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "source_superseded",
+                    "merged",
+                    "user_edit",
+                    "refuted"
+                  ]
+                },
+                "superseded_segment_id": {
+                  "type": "string"
+                },
+                "replacement_card_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "reason",
+                "superseded_segment_id",
+                "replacement_card_id"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at_us": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "updated_at_us": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "state",
+        "session_id",
+        "tenant_id",
+        "surface_form",
+        "canonical_name",
+        "kind",
+        "domain",
+        "salience",
+        "sources",
+        "consent_class",
+        "pii_present"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

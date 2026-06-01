@@ -1,0 +1,83 @@
+{
+  "$ref": "#/definitions/knowledge_graph_edge",
+  "definitions": {
+    "knowledge_graph_edge": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "tenant_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "src": {
+          "type": "string"
+        },
+        "dst": {
+          "type": "string"
+        },
+        "relation": {
+          "type": "string",
+          "enum": [
+            "mentions",
+            "discusses",
+            "defines",
+            "is_a",
+            "part_of",
+            "causes",
+            "depends_on",
+            "contrasts_with",
+            "example_of",
+            "attributed_to",
+            "decided_by",
+            "raised_by",
+            "references",
+            "temporal_follows",
+            "same_as",
+            "related_to"
+          ]
+        },
+        "directed": {
+          "type": "boolean"
+        },
+        "weight": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "evidence_segment_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "session_id",
+        "tenant_id",
+        "src",
+        "dst",
+        "relation",
+        "directed"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

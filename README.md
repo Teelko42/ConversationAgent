@@ -7,14 +7,16 @@
 > interviews. *"AI explains the room."*
 
 This repository holds the **complete technical architecture and product
-blueprint** for Aizen: production-grade design documents produced by a
-ten-team / five-lane architecture exercise and integrated into one unified plan.
-It is design documentation intended to be built from — not yet running code.
+blueprint** for Aizen — production-grade design documents from a ten-team /
+five-lane architecture exercise, an adversarial validation + remediation pass
+(docs 09–13), and the **Phase 0 foundation code** that builds against the
+hardened spec.
 
 ## Start here
 
 - **[Executive Summary](docs/architecture/00-integration/08-executive-summary.md)** — the one-page read.
-- **[Integration index](docs/architecture/00-integration/README.md)** — unified/MVP/scaling architecture, phased plan, staffing, risks.
+- **[Integration index](docs/architecture/00-integration/README.md)** — unified/MVP/scaling architecture, phased plan, staffing, risks, validation + remediation.
+- **[Phase 0 code](#phase-0--foundation-code)** — the TypeScript monorepo (contracts, seams, gateway) + Terraform skeleton.
 
 ## The blueprint
 
@@ -74,6 +76,39 @@ cross-lane couplings are those contracts plus four integration decisions
 | **MVP** | Web+desktop, Zoom join, transcribe+explain+insights, consent, Free+Pro — 1k MAU |
 | **Timeline** | ~18 wks to beta, ~26 to GA; ~11–13 → ~22–27 people |
 | **Top risk** | Unit economics (RISK-1) — never sell "unlimited" |
+
+## Phase 0 — foundation code
+
+The vendor-free slice of Phase 0 (doc 05) — the parts that need no AWS/Anthropic/
+Deepgram account — is implemented and tested. It builds directly against the
+hardened spec (D16-amend, D17, INV-8, D20, INV-9) and exists to make those
+decisions executable rather than prose.
+
+```
+packages/                      # pnpm + TypeScript monorepo
+  contracts/                   # @aizen/contracts — the 5 canonical contracts (D06)
+    src/*.ts                   #   zod schemas + inferred types (incl. retracted state,
+    schema/*.schema.json       #   ConsentContext, kg_snapshot/resync) → JSON Schema registry
+  adapter-d16/                 # Seam A — pure F01→F02 adapter (rev/supersedes, fail-closed)
+  seam-supersede/              # Seam B / INV-8 — provenance index, re-extract/retract
+  seam-kg-resync/              # Seam C — delta_seq↔Position index, resync decision tree
+  llm-gateway/                 # D15 skeleton — tier routing, cost ceilings, D17 gate (stubbed)
+infra/                         # Terraform skeleton — MVP topology (no live deploy; MAN-F04-001)
+```
+
+**Run it** (pnpm via corepack):
+
+```bash
+corepack pnpm@9.7.0 install
+corepack pnpm@9.7.0 test          # 34 contract tests (CT-A*, CT-B*, CT-C*, CT-M2, gateway)
+corepack pnpm@9.7.0 typecheck
+corepack pnpm@9.7.0 --filter @aizen/contracts run export-schema   # regenerate the registry
+```
+
+The six contract-test suites (doc 10 §1.5/§2.6/§3.6) are executable specifications:
+they encode the H-7/H-8/H-9/H-13 fixes as regression guards. **Next** Phase-0 work
+is vendor-gated (AWS org, Deepgram, Anthropic — the `NEEDS_USER.md` accounts):
+the STT integration, the real LLM providers, and `terraform apply`.
 
 ## How this blueprint was produced
 

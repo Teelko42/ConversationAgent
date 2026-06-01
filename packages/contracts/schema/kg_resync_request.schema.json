@@ -1,0 +1,86 @@
+{
+  "$ref": "#/definitions/kg_resync_request",
+  "definitions": {
+    "kg_resync_request": {
+      "type": "object",
+      "properties": {
+        "message_type": {
+          "type": "string",
+          "const": "kg_resync_request"
+        },
+        "session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "tenant_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "requester": {
+          "type": "string"
+        },
+        "last_applied_delta_seq": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gap": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "missing_from": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "observed": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "missing_from",
+                "observed"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "delta_seq_gap",
+            "cold_start",
+            "hash_mismatch",
+            "reconnect"
+          ]
+        },
+        "max_replay": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "message_type",
+        "session_id",
+        "tenant_id",
+        "requester",
+        "last_applied_delta_seq",
+        "gap",
+        "reason",
+        "max_replay"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

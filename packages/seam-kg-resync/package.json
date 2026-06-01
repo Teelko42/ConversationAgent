@@ -1,0 +1,13 @@
+{
+  "name": "@aizen/seam-kg-resync",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Seam C (doc 10 §3) — kg_delta resync: delta_seq↔Position index, gap detection, the resync decision tree, content-hash convergence.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": { "build": "tsc -b" },
+  "dependencies": {
+    "@aizen/contracts": "workspace:*"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "aizen",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Aizen — real-time conversation intelligence. Phase 0 foundation: canonical data contracts, the D16 ingress adapter, the supersede/resync seams, the LLM-gateway skeleton, and their executable contract-test suites.",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -b",
+    "export-schema": "pnpm --filter @aizen/contracts run export-schema"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  },
+  "packageManager": "pnpm@9.7.0",
+  "engines": {
+    "node": ">=20"
+  }
+}

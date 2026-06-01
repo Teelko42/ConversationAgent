@@ -1,0 +1,100 @@
+{
+  "$ref": "#/definitions/knowledge_graph_node",
+  "definitions": {
+    "knowledge_graph_node": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "tenant_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "label": {
+          "type": "string"
+        },
+        "node_type": {
+          "type": "string",
+          "enum": [
+            "concept",
+            "topic",
+            "entity",
+            "speaker",
+            "insight",
+            "document",
+            "event"
+          ]
+        },
+        "concept_card_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "domain": {
+          "type": "string"
+        },
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "salience": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "degree": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "first_seen_segment_id": {
+          "type": "string"
+        },
+        "first_seen_t_us": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_seen_t_us": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "embedding_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "consent_class": {
+          "type": "string",
+          "enum": [
+            "standard",
+            "sensitive"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "session_id",
+        "tenant_id",
+        "label",
+        "node_type",
+        "concept_card_id",
+        "consent_class"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

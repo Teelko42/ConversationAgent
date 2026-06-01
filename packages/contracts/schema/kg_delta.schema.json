@@ -1,0 +1,221 @@
+{
+  "$ref": "#/definitions/kg_delta",
+  "definitions": {
+    "kg_delta": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "delta_seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "upsert_nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "revision": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "session_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "tenant_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "label": {
+                "type": "string"
+              },
+              "node_type": {
+                "type": "string",
+                "enum": [
+                  "concept",
+                  "topic",
+                  "entity",
+                  "speaker",
+                  "insight",
+                  "document",
+                  "event"
+                ]
+              },
+              "concept_card_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "domain": {
+                "type": "string"
+              },
+              "aliases": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "salience": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "degree": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "first_seen_segment_id": {
+                "type": "string"
+              },
+              "first_seen_t_us": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "last_seen_t_us": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "embedding_ref": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "consent_class": {
+                "type": "string",
+                "enum": [
+                  "standard",
+                  "sensitive"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "revision",
+              "session_id",
+              "tenant_id",
+              "label",
+              "node_type",
+              "concept_card_id",
+              "consent_class"
+            ],
+            "additionalProperties": false
+          },
+          "default": []
+        },
+        "upsert_edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "revision": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "session_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "tenant_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "src": {
+                "type": "string"
+              },
+              "dst": {
+                "type": "string"
+              },
+              "relation": {
+                "type": "string",
+                "enum": [
+                  "mentions",
+                  "discusses",
+                  "defines",
+                  "is_a",
+                  "part_of",
+                  "causes",
+                  "depends_on",
+                  "contrasts_with",
+                  "example_of",
+                  "attributed_to",
+                  "decided_by",
+                  "raised_by",
+                  "references",
+                  "temporal_follows",
+                  "same_as",
+                  "related_to"
+                ]
+              },
+              "directed": {
+                "type": "boolean"
+              },
+              "weight": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "evidence_segment_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "id",
+              "revision",
+              "session_id",
+              "tenant_id",
+              "src",
+              "dst",
+              "relation",
+              "directed"
+            ],
+            "additionalProperties": false
+          },
+          "default": []
+        },
+        "remove_node_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "remove_edge_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "snapshot_offer": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "session_id",
+        "delta_seq"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
