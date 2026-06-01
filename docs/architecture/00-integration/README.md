@@ -13,8 +13,24 @@ Conductor-produced synthesis of all five lanes (ten teams). Read in order:
 | 7 | [Technical Risk Assessment](07-technical-risk-assessment.md) | 12 ranked risks + mitigations; RISK-1 = unit economics. |
 | 8 | [Executive Summary](08-executive-summary.md) | The one-page leadership read. |
 
-**Verdict:** zero hard architectural contradictions; all seams resolved via
-adapters + ownership (D13–D16). Ready to staff and build.
+**Validation & remediation (2026-06-01)** — adversarial pre-build review and the
+design that closes its findings (read these before Phase 0):
 
-Shared conventions governing every lane: see `DECISIONS.md` (D01–D16) in the run
-directory. Outstanding human actions: `NEEDS_USER.md` (27 tasks, 10 High).
+| # | Doc | What it answers |
+|---|---|---|
+| 9 | [Validation Review](09-validation-review.md) | Adversarial findings: 13 HIGH / 10 MED / 5 LOW + 4 actions. |
+| 10 | [Seam Contracts](10-seam-contracts.md) | Field-level D16 adapter, supersede propagation (INV-8), `kg_delta` resync. |
+| 11 | [Cost Model](11-cost-model.md) | Bottom-up unit cost (~$3.5/hr MVP), GPU crossover, margin/overage fix (RISK-1). |
+| 12 | [Latency Budget](12-latency-budget.md) | p50+p95 budget that sums; speculative-on-partial trigger (D17). |
+| 13 | [Consent & Privacy Redesign](13-consent-and-privacy-redesign.md) | Per-speaker consent (D18), bot gating (D19), fail-closed PII gate (D20). |
+
+**Verdict (revised):** the blueprint is a strong, build-worthy skeleton, but the
+original "zero hard architectural contradictions / internally consistent" claim
+(doc 01) was overstated — three load-bearing seams were *assigned, not designed*,
+and two headline numbers (latency, margin) did not survive their own arithmetic.
+Docs 09–13 close those gaps; the design is now build-ready. Remaining open items
+are external (rate cards, sub-processor contracts, jurisdiction matrix, eval set).
+
+Shared conventions governing every lane: see [`DECISIONS.md`](DECISIONS.md)
+(D01–D20, INV-8/9) — the canonical in-tree ledger. Outstanding human actions:
+`NEEDS_USER.md` (27 tasks, 10 High) in the run directory.
