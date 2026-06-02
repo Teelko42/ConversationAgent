@@ -13,6 +13,12 @@ export default defineConfig({
       '@aizen/seam-supersede': pkg('@aizen/seam-supersede', 'seam-supersede'),
       '@aizen/seam-kg-resync': pkg('@aizen/seam-kg-resync', 'seam-kg-resync'),
       '@aizen/llm-gateway': pkg('@aizen/llm-gateway', 'llm-gateway'),
+      '@aizen/edge-gateway': pkg('@aizen/edge-gateway', 'edge-gateway'),
+      '@aizen/capture': pkg('@aizen/capture', 'capture'),
+      '@aizen/stt-worker': pkg('@aizen/stt-worker', 'stt-worker'),
+      '@aizen/intel-worker': pkg('@aizen/intel-worker', 'intel-worker'),
+      '@aizen/web-client': pkg('@aizen/web-client', 'web-client'),
+      '@aizen/session-conductor': pkg('@aizen/session-conductor', 'session-conductor'),
     },
   },
   test: {

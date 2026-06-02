@@ -1,0 +1,19 @@
+{
+  "name": "@aizen/session-conductor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Lane E — F03.T7 Session-Conductor: wires capture -> stt -> intel over one bus; failure-recovery stub; owns CT-E2E-1 (BD-05).",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": { "build": "tsc -b", "run-spine": "tsx scripts/run-spine.ts" },
+  "dependencies": {
+    "@aizen/contracts": "workspace:*",
+    "@aizen/edge-gateway": "workspace:*",
+    "@aizen/capture": "workspace:*",
+    "@aizen/stt-worker": "workspace:*",
+    "@aizen/intel-worker": "workspace:*",
+    "@aizen/llm-gateway": "workspace:*",
+    "@aizen/web-client": "workspace:*"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "references": [
+    { "path": "../contracts" },
+    { "path": "../adapter-d16" },
+    { "path": "../seam-supersede" },
+    { "path": "../seam-kg-resync" },
+    { "path": "../llm-gateway" },
+    { "path": "../edge-gateway" }
+  ],
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"]
+}

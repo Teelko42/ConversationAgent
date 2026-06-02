@@ -1,0 +1,18 @@
+{
+  "name": "@aizen/intel-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Lane D — F02 hot path: TranscriptSegment -> adapt(D16) -> skeleton ConceptCard/InsightItem/kg_delta via the LLM gateway stub; provenance (INV-8) + delta index. Reuses the foundation (BD-04).",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": { "build": "tsc -b" },
+  "dependencies": {
+    "@aizen/contracts": "workspace:*",
+    "@aizen/adapter-d16": "workspace:*",
+    "@aizen/seam-supersede": "workspace:*",
+    "@aizen/seam-kg-resync": "workspace:*",
+    "@aizen/llm-gateway": "workspace:*",
+    "@aizen/edge-gateway": "workspace:*"
+  }
+}

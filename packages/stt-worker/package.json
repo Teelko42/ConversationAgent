@@ -1,0 +1,14 @@
+{
+  "name": "@aizen/stt-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Lane C — AudioFrame -> TranscriptSegment via SttProvider/StubSttProvider (BD-03). Deepgram swaps in at P1.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": { "build": "tsc -b" },
+  "dependencies": {
+    "@aizen/contracts": "workspace:*",
+    "@aizen/edge-gateway": "workspace:*"
+  }
+}

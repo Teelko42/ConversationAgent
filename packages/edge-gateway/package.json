@@ -1,0 +1,13 @@
+{
+  "name": "@aizen/edge-gateway",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Lane A — SessionEventBus (BD-01 in-process backbone), seq assigner, fail-closed consent gate, fan-out.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": { "build": "tsc -b" },
+  "dependencies": {
+    "@aizen/contracts": "workspace:*"
+  }
+}

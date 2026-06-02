@@ -11,6 +11,9 @@ importers:
       '@types/node':
         specifier: ^20.14.10
         version: 20.19.41
+      tsx:
+        specifier: ^4.19.0
+        version: 4.22.4
       typescript:
         specifier: ^5.5.4
         version: 5.9.3
@@ -23,6 +26,15 @@ importers:
       '@aizen/contracts':
         specifier: workspace:*
         version: link:../contracts
+
+  packages/capture:
+    dependencies:
+      '@aizen/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@aizen/edge-gateway':
+        specifier: workspace:*
+        version: link:../edge-gateway
 
   packages/contracts:
     dependencies:
@@ -37,6 +49,33 @@ importers:
         specifier: ^3.23.1
         version: 3.25.2(zod@3.25.76)
 
+  packages/edge-gateway:
+    dependencies:
+      '@aizen/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
+  packages/intel-worker:
+    dependencies:
+      '@aizen/adapter-d16':
+        specifier: workspace:*
+        version: link:../adapter-d16
+      '@aizen/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@aizen/edge-gateway':
+        specifier: workspace:*
+        version: link:../edge-gateway
+      '@aizen/llm-gateway':
+        specifier: workspace:*
+        version: link:../llm-gateway
+      '@aizen/seam-kg-resync':
+        specifier: workspace:*
+        version: link:../seam-kg-resync
+      '@aizen/seam-supersede':
+        specifier: workspace:*
+        version: link:../seam-supersede
+
   packages/llm-gateway: {}
 
   packages/seam-kg-resync:
@@ -50,6 +89,48 @@ importers:
       '@aizen/contracts':
         specifier: workspace:*
         version: link:../contracts
+
+  packages/session-conductor:
+    dependencies:
+      '@aizen/capture':
+        specifier: workspace:*
+        version: link:../capture
+      '@aizen/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@aizen/edge-gateway':
+        specifier: workspace:*
+        version: link:../edge-gateway
+      '@aizen/intel-worker':
+        specifier: workspace:*
+        version: link:../intel-worker
+      '@aizen/llm-gateway':
+        specifier: workspace:*
+        version: link:../llm-gateway
+      '@aizen/stt-worker':
+        specifier: workspace:*
+        version: link:../stt-worker
+      '@aizen/web-client':
+        specifier: workspace:*
+        version: link:../web-client
+
+  packages/stt-worker:
+    dependencies:
+      '@aizen/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@aizen/edge-gateway':
+        specifier: workspace:*
+        version: link:../edge-gateway
+
+  packages/web-client:
+    dependencies:
+      '@aizen/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@aizen/edge-gateway':
+        specifier: workspace:*
+        version: link:../edge-gateway
 
 packages:
 
