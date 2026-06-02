@@ -13,7 +13,7 @@ grows along the scaling ladder (doc 04).
 | AI/applied-LLM engineers | 2 | F02·T3/T4/T5 | Extraction, explanation, RAG, grounding — the wedge |
 | Orchestration/backend engineer | 1 | F03·T7 | Session-Conductor, workers, failure recovery |
 | Full-stack / frontend engineers | 2 | F03·T6 | Web + desktop UI, live rendering, a11y |
-| Platform/DevOps engineer | 1 | F04·T8 | AWS, EventBus, datastores, LLM gateway, CI/CD, observability |
+| Platform/DevOps engineer | 1 | F04·T8 | Azure, EventBus, datastores, LLM gateway, CI/CD, observability |
 | Security/compliance engineer (or fractional + counsel) | 0.5–1 | F04·T9 | Consent loop, encryption, SOC 2 program, threat model |
 | Product manager | 1 | F05 | Scope, prioritization, design-partner program |
 | Design (product + a11y-aware) | 1 | F03·T6 / F05 | UX, wireframes→production, WCAG |
@@ -25,8 +25,8 @@ grows along the scaling ladder (doc 04).
 
 | Add | Count | Reason (scaling trigger, doc 04) |
 |---|---|---|
-| GPU/ML infra engineer | 1–2 | Self-host STT + open-weight LLM on EKS+Karpenter (cost lever) |
-| Data/graph engineer | 1 | Neptune migration + graph viz pipeline |
+| GPU/ML infra engineer | 1–2 | Self-host STT + open-weight LLM on AKS (+ GPU node pools / cluster autoscaler) (cost lever) |
+| Data/graph engineer | 1 | Managed graph DB (Cosmos DB Gremlin / Neo4j-class) migration + graph viz pipeline |
 | Mobile engineers (iOS/Android) | 2 | Mobile apps |
 | Integrations engineer | 1 | Teams/Meet/Webex joins |
 | SRE | 1–2 | Multi-region, DR, SLOs at 5k concurrent |

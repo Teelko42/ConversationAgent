@@ -34,7 +34,7 @@ once compliance matures.
    timeline, graph viz; WCAG 2.2 AA; web/desktop/mobile.
 7. **Orchestrate** (F03·T7) — a Session-Conductor routes work across tiers and
    recovers from failure inside the latency budget.
-8. **Platform** (F04·T8) — AWS, an `EventBus` spine, tiered datastores, a shared
+8. **Platform** (F04·T8) — Azure, an `EventBus` spine, tiered datastores, a shared
    LLM gateway, observability, multi-region, DR.
 9. **Trust** (F04·T9) — consent loop, encryption, retention controls, GDPR/CCPA/
    HIPAA roadmap, enterprise controls, audit.
@@ -89,6 +89,6 @@ margin-positive platform at scale. It is ready to staff and build.
 ### Open items requiring the user (top of `NEEDS_USER.md`, 10 of 27 High)
 
 Anthropic/Claude API access + quota · STT vendor account/keys + DPA/BAA ·
-web-search API · embedding/vector store · Zoom Marketplace app · AWS org +
+web-search API · embedding/vector store · Zoom Marketplace app · Azure tenant +
 billing owner · domain + DNS · SOC 2 auditor · privacy/legal counsel ·
 recruit 10–15 design partners.

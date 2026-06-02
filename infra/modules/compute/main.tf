@@ -1,33 +1,28 @@
 variable "name" { type = string }
-variable "vpc_id" { type = string }
-variable "private_subnet_ids" { type = list(string) }
+variable "location" { type = string }
+variable "resource_group_name" { type = string }
+variable "app_subnet_id" { type = string }
+variable "log_analytics_workspace_id" { type = string }
+variable "zone_redundant" { type = bool }
 
-# D-PLAT-01 — hot path on ECS Fargate (no Lambda on the hot path; GPU=EKS deferred
-# to the self-host scaling trigger, doc 04 / RISK-1).
-resource "aws_ecs_cluster" "this" {
-  name = "${var.name}-cluster"
-
-  setting {
-    name  = "containerInsights"
-    value = "enabled" # feeds the cost/SLO dashboards (P0, doc 11 §7 / doc 12 §8)
-  }
+# D-PLAT-01 — hot path on Azure Container Apps (serverless containers; the Fargate
+# analog). No Functions on the hot path; GPU (self-host STT/LLM) is deferred to the
+# scaling trigger via a workload-profile / AKS pool (doc 04 / RISK-1).
+resource "azurerm_container_app_environment" "this" {
+  name                       = "${var.name}-cae"
+  location                   = var.location
+  resource_group_name        = var.resource_group_name
+  log_analytics_workspace_id = var.log_analytics_workspace_id # feeds cost/SLO dashboards (doc 11 §7 / doc 12 §8)
+  infrastructure_subnet_id   = var.app_subnet_id
+  zone_redundancy_enabled    = var.zone_redundant
 }
 
-resource "aws_ecs_cluster_capacity_providers" "this" {
-  cluster_name       = aws_ecs_cluster.this.name
-  capacity_providers = ["FARGATE", "FARGATE_SPOT"]
-
-  default_capacity_provider_strategy {
-    capacity_provider = "FARGATE" # warm hot path; Spot reserved for off-path/batch
-    weight            = 1
-  }
-}
-
-# Service skeletons — task definitions/images come with the app build.
+# Service skeletons — container images / app definitions come with the app build.
 # - realtime-gateway : WSS/WebRTC term, seq assigner, consent gate (D18)
 # - extract-explain  : F02 worker (adapter D16 → extract → enrich), LLM gateway client
-# TODO(app build): aws_ecs_task_definition + aws_ecs_service per the above,
-# autoscaling on active-sessions / Kinesis consumer-lag (team-08 §2.3).
+# TODO(app build): azurerm_container_app per the above, with scale rules on
+# active-sessions / Event Hubs consumer-lag (KEDA; team-08 §2.3). Spot via the
+# Consumption workload profile for off-path/batch.
 
-output "cluster_arn" { value = aws_ecs_cluster.this.arn }
-output "cluster_name" { value = aws_ecs_cluster.this.name }
+output "environment_id" { value = azurerm_container_app_environment.this.id }
+output "environment_name" { value = azurerm_container_app_environment.this.name }

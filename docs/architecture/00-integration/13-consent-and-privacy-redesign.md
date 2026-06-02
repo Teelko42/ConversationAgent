@@ -152,7 +152,7 @@ an explicit scope boundary that legal can sign off on (OQ-SEC-3/5).
 
 ## 3. The disclosure badge: separate "not retained" from "not disclosed" (closes H-12)
 
-"Audio is never written to S3" is true but **legally non-load-bearing**:
+"Audio is never written to Blob Storage" is true but **legally non-load-bearing**:
 transmitting audio to a hosted STT (Deepgram-class) **is itself** the regulated
 disclosure/interception event for wiretap/HIPAA purposes, and the vendor may
 buffer or train unless zero-retention is contractually enforced (OQ-SEC-1). The
@@ -162,7 +162,7 @@ single "audio not stored" badge conflates two distinct facts.
 
 | Claim (badge) | Truth condition | What it does NOT assert |
 |---|---|---|
-| `no_audio_retention` — "Aizen does not store your audio" | audio is ephemeral; never persisted to S3 (team-09 §4) | does **not** assert third parties don't receive it |
+| `no_audio_retention` — "Aizen does not store your audio" | audio is ephemeral; never persisted to Blob Storage (team-09 §4) | does **not** assert third parties don't receive it |
 | `processing_disclosure` — "Audio is transmitted in real time to our transcription provider (**Deepgram**) under DPA, and is not stored" | sub-processor named (GDPR §7 list) **and** zero-retention DPA in place | — |
 | `no_third_party_disclosure` — "Your audio never leaves Aizen's environment" | **self-host STT** path only (no third-party egress) | only truthful for the self-host tier |
 
@@ -207,11 +207,11 @@ budget — ~50–150 ms is ample.
 | Layer | Detects | Implementation options |
 |---|---|---|
 | **Deterministic recognizers** | SSN, credit-card (Luhn), MRN/account patterns, email, phone, DOB | regex + checksums (Presidio-class recognizers) |
-| **Statistical NER** | person names, locations, orgs | small NER model (spaCy / open-weight), in-VPC |
-| **Regulated-domain entities** | PHI (medical), financial identifiers, legal-party names | AWS **Comprehend Medical** (managed) **or** in-VPC medical NER for self-host/HIPAA tenants |
+| **Statistical NER** | person names, locations, orgs | small NER model (spaCy / open-weight), in-VNet |
+| **Regulated-domain entities** | PHI (medical), financial identifiers, legal-party names | Azure **AI Language (Text Analytics for health)** (managed) **or** in-VNet medical NER for self-host/HIPAA tenants |
 
-Runs in-VPC for strict tenants (no third-party call to classify — that would
-reintroduce the disclosure problem). Managed (Comprehend) acceptable for
+Runs in-VNet for strict tenants (no third-party call to classify — that would
+reintroduce the disclosure problem). Managed (Azure AI Language) acceptable for
 standard tenants under DPA.
 
 ### 4.3 Recall target (the safety bar) + fail-closed
@@ -276,13 +276,13 @@ lower readiness band as if it were engineered:
 
 | Claim | Band | Status | Owner |
 |---|---|---|---|
-| Encryption in transit/at rest (TLS 1.3, SSE-KMS) | **(a) engineered + testable** | now | F04 |
+| Encryption in transit/at rest (TLS 1.3, encryption at rest via Key Vault customer-managed keys) | **(a) engineered + testable** | now | F04 |
 | Consent gate blocks capture pre-`consented` (per §1) | (a) engineered + testable | this redesign | F04 |
 | No-audio-retention default (ephemeral audio) | (a) engineered + testable | now | F04 |
 | INV-6 PII gate, fail-closed (§4) | (a) engineered + testable | Phase 0/1 | F02+F04 |
 | RLS / per-tenant CMK isolation | (a) engineered + testable | now | F04 |
 | **DPA with customers + sub-processor list** | **(b) contractual prerequisite** | manual (MAN) | legal |
-| **BAA (AWS / Anthropic / STT) or self-host** | (b) contractual prerequisite | manual (OQ-SEC-1) | legal+F01 |
+| **BAA (Azure / Anthropic / STT) or self-host** | (b) contractual prerequisite | manual (OQ-SEC-1) | legal+F01 |
 | **STT vendor zero-retention** (gates §3 badge) | (b) contractual prerequisite | manual (OQ-SEC-1) | legal |
 | **SOC 2 Type I / II** | **(c) future cert (date)** | Type I 3–6 mo; Type II 6–12 mo | sec lead |
 | **HIPAA tier** | (c) future cert (date) | 9–18 mo, gated tier | sec lead |
@@ -302,7 +302,7 @@ F05 §10 "never sell a compliance claim we can't back").
   doc's D20 are the same fail-closed rule at adapter and gate.
 - **Doc 11 cost model** — strict/regulated/all-party-strict tenants default to
   **self-host STT** (§1.2, §3), which is the same self-host path the cost model
-  prices; the §4 classifier adds a small in-VPC compute line (negligible vs LLM).
+  prices; the §4 classifier adds a small in-VNet compute line (negligible vs LLM).
 - **Doc 12 latency** — the §4 classifier sits on the deep (≤10 s) path, not the
   ≤1 s enrich path, so it does not affect the wedge metric.
 

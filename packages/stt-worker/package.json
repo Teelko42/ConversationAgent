@@ -9,6 +9,11 @@
   "scripts": { "build": "tsc -b" },
   "dependencies": {
     "@aizen/contracts": "workspace:*",
-    "@aizen/edge-gateway": "workspace:*"
+    "@aizen/edge-gateway": "workspace:*",
+    "@deepgram/sdk": "^5.4.0",
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
   }
 }

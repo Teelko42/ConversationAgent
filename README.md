@@ -43,7 +43,7 @@ docs/architecture/
 ├── 03-experience-orchestration/     # Teams 6–7: UX + multi-agent runtime
 │   ├── team-06-user-experience.md
 │   └── team-07-agent-orchestration.md
-├── 04-platform-security/            # Teams 8–9: AWS platform + trust
+├── 04-platform-security/            # Teams 8–9: Azure platform + trust
 │   ├── team-08-infrastructure-platform.md
 │   └── team-09-security-privacy-compliance.md
 └── 05-product-strategy/             # Team 10: market, pricing, roadmap
@@ -71,7 +71,7 @@ cross-lane couplings are those contracts plus four integration decisions
 |---|---|
 | **Wedge** | Live *explain-and-teach*, not after-the-fact summaries |
 | **Latency** | speech → first useful card p50 ≤ 3 s / p95 ≤ 5 s; deep dives ≤ 10 s |
-| **Stack** | AWS · Kinesis→MSK · Aurora+pgvector→Neptune · Claude Haiku/Sonnet/Opus · WebRTC |
+| **Stack** | Azure · Event Hubs→Kafka · Postgres+pgvector→graph DB · Claude Haiku/Sonnet/Opus · WebRTC |
 | **Cost** | $2.00/session-hr (MVP) → $0.47 (scale); margin plan = the self-host curve |
 | **MVP** | Web+desktop, Zoom join, transcribe+explain+insights, consent, Free+Pro — 1k MAU |
 | **Timeline** | ~18 wks to beta, ~26 to GA; ~11–13 → ~22–27 people |
@@ -79,7 +79,7 @@ cross-lane couplings are those contracts plus four integration decisions
 
 ## Phase 0 — foundation code
 
-The vendor-free slice of Phase 0 (doc 05) — the parts that need no AWS/Anthropic/
+The vendor-free slice of Phase 0 (doc 05) — the parts that need no Azure/Anthropic/
 Deepgram account — is implemented and tested. It builds directly against the
 hardened spec (D16-amend, D17, INV-8, D20, INV-9) and exists to make those
 decisions executable rather than prose.
@@ -92,23 +92,56 @@ packages/                      # pnpm + TypeScript monorepo
   adapter-d16/                 # Seam A — pure F01→F02 adapter (rev/supersedes, fail-closed)
   seam-supersede/              # Seam B / INV-8 — provenance index, re-extract/retract
   seam-kg-resync/              # Seam C — delta_seq↔Position index, resync decision tree
-  llm-gateway/                 # D15 skeleton — tier routing, cost ceilings, D17 gate (stubbed)
+  edge-gateway/                # Lane A — per-session ordered event bus + consent gate (BD-01)
+  capture/                     # Lane B — source → AudioFrame (mock clip; real mic via the server)
+  stt-worker/                  # Lane C — STT seam: StubSttProvider + DeepgramSttProvider (P1)
+  llm-gateway/                 # D15 — tier routing, cost ceilings, D17 gate; Stub + Anthropic (P2)
+  research/                    # P2-C — WebSearchProvider seam + Tavily adapter (sourced background)
+  intel-worker/                # Lane D — extraction (skeleton cards) + enrichment ("explain engine")
+  web-client/                  # Lane E — headless render fold (the browser UI lives in server/public)
+  session-conductor/           # Lane E — deterministic spine wiring + run-spine demo
+  server/                      # THE APP — http + WebSocket: browser mic → STT → intel → live cards
 infra/                         # Terraform skeleton — MVP topology (no live deploy; MAN-F04-001)
 ```
 
-**Run it** (pnpm via corepack):
+### Run the app
 
 ```bash
 corepack pnpm@9.7.0 install
-corepack pnpm@9.7.0 test          # 34 contract tests (CT-A*, CT-B*, CT-C*, CT-M2, gateway)
+cp .env.example .env          # then paste your keys into .env (see below)
+corepack pnpm@9.7.0 start     # → http://localhost:5173
+```
+
+Open the URL and click **Start listening**. The app runs in one of three modes
+depending on which keys are in `.env` (it never needs all of them to boot):
+
+| Keys present | Mode | What you get |
+|---|---|---|
+| none | **demo** | a canned clip drives the pipeline (transcript + cards), all stubbed |
+| `ANTHROPIC_API_KEY` only | **demo + real AI** | the demo card is explained by the real model |
+| `+ DEEPGRAM_API_KEY` | **live** | speak into your mic → live transcript → real explanations |
+| `+ TAVILY_API_KEY` | **live + sourced** | concept cards carry web citations |
+
+Audio path: the browser captures the mic, downsamples to 16 kHz PCM16, and streams
+it over a WebSocket; the server bridges it to Deepgram, runs extraction +
+enrichment over the one session bus, and pushes transcript + concept cards back to
+the browser as they happen. Providers are chosen by key presence — the same wiring
+runs stubbed or fully real (BD-03), so there is no separate "demo build".
+
+### Dev / test
+
+```bash
+corepack pnpm@9.7.0 test          # 83 tests (contracts, seams, gateway, STT/Deepgram, enrich, research)
 corepack pnpm@9.7.0 typecheck
+corepack pnpm@9.7.0 spine          # the deterministic stub spine, printed to the console
 corepack pnpm@9.7.0 --filter @aizen/contracts run export-schema   # regenerate the registry
 ```
 
-The six contract-test suites (doc 10 §1.5/§2.6/§3.6) are executable specifications:
-they encode the H-7/H-8/H-9/H-13 fixes as regression guards. **Next** Phase-0 work
-is vendor-gated (AWS org, Deepgram, Anthropic — the `NEEDS_USER.md` accounts):
-the STT integration, the real LLM providers, and `terraform apply`.
+The contract-test suites (doc 10 §1.5/§2.6/§3.6) are executable specifications:
+they encode the H-7/H-8/H-9/H-13 fixes as regression guards. The real Deepgram (P1)
+and Anthropic (P2) providers swap in behind the same interfaces and are covered by
+their own injected-client tests. Remaining vendor-gated work is `terraform apply`
+(Azure subscription, MAN-F04-001) and the harder P3+ lanes (Zoom, billing, a11y).
 
 ## How this blueprint was produced
 

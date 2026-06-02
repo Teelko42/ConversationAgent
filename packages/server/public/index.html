@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aizen — live conversation intelligence</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Aizen</h1>
+      <div id="status" class="status">connecting…</div>
+      <div class="controls">
+        <button id="mic" disabled>🎙 Start listening</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="col transcript">
+        <h2>Transcript</h2>
+        <div id="transcript" class="stream"></div>
+      </section>
+
+      <section class="col cards">
+        <h2>Concept cards</h2>
+        <div id="cards" class="stream"></div>
+        <h2>Insights</h2>
+        <div id="insights" class="stream"></div>
+      </section>
+    </main>
+
+    <footer>
+      <span id="hint"></span>
+    </footer>
+
+    <script src="/client.js"></script>
+  </body>
+</html>

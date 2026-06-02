@@ -1,15 +1,19 @@
-output "vpc_id" {
-  value = module.network.vpc_id
+output "resource_group_name" {
+  value = azurerm_resource_group.this.name
 }
 
-output "kinesis_stream_name" {
-  value = module.eventbus.stream_name
+output "vnet_id" {
+  value = module.network.vnet_id
 }
 
-output "aurora_endpoint" {
-  value = module.datastores.aurora_endpoint
+output "eventhub_name" {
+  value = module.eventbus.eventhub_name
 }
 
-output "ecs_cluster_arn" {
-  value = module.compute.cluster_arn
+output "postgres_fqdn" {
+  value = module.datastores.postgres_fqdn
+}
+
+output "container_app_environment_id" {
+  value = module.compute.environment_id
 }

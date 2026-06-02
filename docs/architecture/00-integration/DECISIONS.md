@@ -21,9 +21,9 @@
   - Year-1 scale: 100,000 MAU, ~5,000 concurrent sessions peak.
   - North-star: 2,000,000 MAU, ~50,000 concurrent sessions peak, global.
 
-- **D03 — Default cloud = AWS.** Primary region us-east-1, multi-AZ; second
-  region us-west-2 for DR; eu-central-1 for EU data residency at scale. Lanes
-  may note GCP/Azure equivalents but cost/scale math uses AWS.
+- **D03 — Default cloud = Azure.** Primary region eastus, zone-redundant; second
+  region westus for DR; westeurope for EU data residency at scale. Lanes
+  may note AWS/GCP equivalents but cost/scale math uses Azure.
 
 - **D04 — LLM strategy.** Anthropic **Claude** family is the primary reasoning/
   explanation model (Opus-class for deep explanation, Sonnet-class for the
@@ -63,7 +63,7 @@
   > `12-latency-budget.md`. The 3 s/5 s *targets* stand; the *split* is superseded.
 
 - **D08 — Event backbone.** Treat the pipeline as an event-streaming system.
-  Default to a managed log/stream (Kafka-class; AWS MSK or Kinesis) plus
+  Default to a managed log/stream (Kafka-class; Azure Event Hubs or a Kafka surface) plus
   WebSocket/WebRTC at the edge. F08 (platform) owns the authoritative choice;
   other lanes assume a durable ordered per-session stream exists. *(Concretized by
   D13.)*
@@ -71,7 +71,7 @@
 - **D09 — Datastores (defaults; F08/platform owns final word).** Postgres for
   relational/transactional, a vector store for embeddings (pgvector at MVP →
   dedicated vector DB at scale), a graph store for the knowledge graph
-  (Postgres-backed adjacency at MVP → Neo4j-class at scale), object storage (S3)
+  (Postgres-backed adjacency at MVP → Neo4j-class at scale), object storage (Azure Blob)
   for audio/artifacts, Redis for cache/session state. *(Refined by D14.)*
 
 - **D10 — Privacy & consent are first-class, not bolted on.** Two-party-consent
@@ -114,17 +114,17 @@ assessment, executive summary) is **conductor-owned**, not a lane.
 Propagated after reviewing all five lanes' RESULT.md + docs.
 
 - **D13 — Event backbone confirmed (supersedes the D08 default's ambiguity).**
-  Per F04: **Amazon Kinesis at MVP → Amazon MSK (Kafka) at Year-1**, both behind
-  a thin `EventBus` abstraction partitioned by `session_id`; SQS + EventBridge +
-  Step Functions for control-plane/async. Guarantee other lanes rely on is
-  unchanged: a durable, ordered, replayable, per-`session_id` stream with
-  idempotent at-least-once consumers keyed on `(session_id, seq)`. F02/F03's
-  ordering assumptions hold. The `EventBus` exposes an opaque `Position` token
-  (Kinesis SequenceNumber / Kafka offset) — see doc 10 §0.
+  Per F04: **Azure Event Hubs at MVP → a Kafka-compatible log (Event Hubs Dedicated
+  / MSK-class) at Year-1**, both behind a thin `EventBus` abstraction partitioned by
+  `session_id`; Service Bus + Event Grid + Durable Functions for control-plane/async.
+  Guarantee other lanes rely on is unchanged: a durable, ordered, replayable,
+  per-`session_id` stream with idempotent at-least-once consumers keyed on
+  `(session_id, seq)`. F02/F03's ordering assumptions hold. The `EventBus` exposes an
+  opaque `Position` token (Event Hubs offset / Kafka offset) — see doc 10 §0.
 
 - **D14 — Datastores confirmed + one addition (refines D09).** All D09 defaults
-  kept (Aurora Postgres + pgvector → OpenSearch/Pinecone at scale; Postgres-graph
-  → Amazon Neptune at scale; Redis; S3). **Added: DynamoDB** for idempotency/
+  kept (PostgreSQL Flexible Server + pgvector → dedicated vector DB at scale; Postgres-graph
+  → a managed graph DB at scale; Redis; Blob). **Added: Cosmos DB** for idempotency/
   dedup keys and append-only audit — additive, no behavior change for other lanes.
 
 - **D15 — LLM gateway ownership resolved (F03 OQ / F04 OQ).** **F04 (platform)
@@ -133,7 +133,7 @@ Propagated after reviewing all five lanes' RESULT.md + docs.
   limiting + cost-ceiling enforcement. **F03/F07 orchestration consumes it** and
   does NOT call providers directly. Free-tier Haiku-only routing and per-tier
   minute caps (F05 requirement) are enforced at this gateway. Secrets live only
-  in the F04 secret store (AWS Secrets Manager / KMS).
+  in the F04 secret store (Azure Key Vault).
 
 - **D16 — IR-1 resolved: F01↔F02 transcript seam.** F01's `TranscriptSegment`
   (authoritative) is the contract; F02 adapts at its extraction ingress. The
@@ -183,7 +183,7 @@ detailed design changed them; each cites its source doc.
   ~1.8 s/3.4 s and meets D07. Cost: bounded card churn (absorbed by INV-8). The
   **salience+stability gate is the shared control point for both latency and the
   cost model's `enrichments/min` lever.** D07's per-stage table is rebuilt with
-  p50+p95 columns, explicit Kinesis-hop (×2) and provider-RTT lines, and
+  p50+p95 columns, explicit Event Hubs-hop (×2) and provider-RTT lines, and
   layered prompt-cache breakpoints; SLOs are re-keyed to `t_word` (spoken), not
   `t_uend` (utterance-end).
 
@@ -213,7 +213,7 @@ detailed design changed them; each cites its source doc.
   (doc 13 — closes H-13; supersedes the assume-`consent_class`-is-set posture).**
   Two OR-combined signals: `consent_class` (from F04 consent context, by tenant
   vertical/jurisdiction) and `pii_present` (from a layered PII/PHI classifier —
-  deterministic recognizers + NER + Comprehend-Medical/in-VPC). Runs on the deep
+  deterministic recognizers + NER + Azure AI Language for health/in-VNet). Runs on the deep
   (≤10 s) path, not the ≤1 s enrich path. **Recall ≥ 0.95 PII / ≥ 0.98 PHI**
   (recall over precision; over-suppression is the safe error). Missing/errored/
   timed-out ⇒ `pii_present=true` (fail-closed; same rule as the D16 adapter).

@@ -1,7 +1,7 @@
-variable "region" {
-  description = "Primary AWS region (D03: us-east-1 at MVP)."
+variable "location" {
+  description = "Primary Azure region (D03: eastus at MVP)."
   type        = string
-  default     = "us-east-1"
+  default     = "eastus"
 }
 
 variable "env" {
@@ -10,38 +10,56 @@ variable "env" {
   default     = "mvp"
 }
 
-variable "az_count" {
-  description = "Number of AZs to span (multi-AZ at MVP)."
-  type        = number
-  default     = 3
+variable "zone_redundant" {
+  description = "Span availability zones where the SKU supports it (multi-AZ at MVP)."
+  type        = bool
+  default     = true
 }
 
-variable "vpc_cidr" {
-  description = "VPC CIDR."
+variable "vnet_cidr" {
+  description = "Virtual Network address space."
   type        = string
   default     = "10.0.0.0/16"
 }
 
-variable "kinesis_shard_count" {
-  description = "Kinesis shards (D13). MVP ~200 concurrent sessions; size for 2x peak."
+variable "eventhub_partition_count" {
+  description = "Event Hubs partitions (D13). MVP ~200 concurrent sessions; size for 2x peak."
   type        = number
   default     = 8
 }
 
-variable "aurora_min_acu" {
-  description = "Aurora Serverless v2 min ACU (MVP)."
+variable "eventhub_capacity" {
+  description = "Event Hubs namespace throughput units (Standard tier)."
   type        = number
-  default     = 0.5
+  default     = 2
 }
 
-variable "aurora_max_acu" {
-  description = "Aurora Serverless v2 max ACU (MVP)."
+variable "pg_sku" {
+  description = "PostgreSQL Flexible Server SKU (MVP burstable/general-purpose)."
+  type        = string
+  default     = "GP_Standard_D2ds_v5"
+}
+
+variable "pg_storage_mb" {
+  description = "PostgreSQL Flexible Server storage (MB)."
   type        = number
-  default     = 8
+  default     = 32768
+}
+
+variable "redis_capacity" {
+  description = "Azure Cache for Redis capacity (C-family: 0..6)."
+  type        = number
+  default     = 1
+}
+
+variable "redis_sku" {
+  description = "Azure Cache for Redis SKU (Basic | Standard | Premium)."
+  type        = string
+  default     = "Standard"
 }
 
 variable "audio_retention_days" {
-  description = "S3 audio lifecycle (D10/D18: default 0 = no-audio-retention; tenant opt-in raises it)."
+  description = "Blob audio lifecycle (D10/D18: default 0 = no-audio-retention; tenant opt-in raises it)."
   type        = number
   default     = 0
 }

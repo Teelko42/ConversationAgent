@@ -1,6 +1,12 @@
 .claudetrees/
 .claude/
 
+# Secrets — real keys live in .env, which must NEVER be committed.
+# .env.example is the safe, committed template (placeholders only).
+.env
+.env.*
+!.env.example
+
 # Node / TypeScript
 node_modules/
 dist/

@@ -217,10 +217,10 @@ and cross-platform neutrality, then defend with the knowledge graph + verticals.
 | **Free** | $0 | Trial / students / virality | 300 live min/mo; transcript + lite explanations (Haiku-class only, no deep Opus); concept cards limited; 7-day retention; no team features; "Powered by Aizen" on shared notes. |
 | **Pro** | **$20 / user / mo** ($16 annual) | Individual KWs, consultants, sellers | ~1,500 live min/mo (fair-use); full explain-and-teach (Sonnet hot path + Opus deep, F02); research + citations (Team 5); knowledge graph + topic explorer; integrations; 1-yr retention; desktop system-audio + meeting-bot join. |
 | **Team** | **$30 / user / mo** ($25 annual, 3+ seats) | SMB teams | Everything in Pro + shared workspaces, shared knowledge graph, admin console, usage analytics, SSO-lite (Google/MS), centralized billing, higher fair-use pool. |
-| **Enterprise** | **Custom** (~$45–75 / user / mo equiv., min commit) | Mid-market/enterprise, regulated verticals | Everything in Team + SSO/SCIM, audit trails, configurable + no-audio-retention modes, HIPAA/BAA, data residency (eu-central-1), self-host option, dedicated SLAs, priority support, security review support (F04/Team 9). |
+| **Enterprise** | **Custom** (~$45–75 / user / mo equiv., min commit) | Mid-market/enterprise, regulated verticals | Everything in Team + SSO/SCIM, audit trails, configurable + no-audio-retention modes, HIPAA/BAA, data residency (westeurope), self-host option, dedicated SLAs, priority support, security review support (F04/Team 9). |
 
 Add-ons: **usage overage** ($ per 1,000 extra live minutes) and an
-**Enterprise self-host/VPC** uplift.
+**Enterprise self-host/VNet** uplift.
 
 ### 5.2 Cost drivers (tied to what F04 prices)
 
@@ -328,7 +328,7 @@ platform. This is the integration contract handed back in RESULT.md §Integratio
 | **Q1 — MVP / Private beta** | ~1k MAU, ~200 concurrent | MVP Must-set: F01 capture+transcript, F02 extract+explain-and-teach, F03 web+desktop UX + orchestration hot path, F04 consent + multi-tenant core. Insights shipped. | Closed beta with **10–15 design partners** (consultants, sellers, KWs). Founder-led. | Activation ≥60% first-session explain; pricing validated; **5 paying design partners**. |
 | **Q2 — Public launch / PLG** | scale toward ~10–20k MAU | Full Research+citations (Team 5); **meeting-join bot** (Zoom first → Teams/Meet); knowledge-graph viz (F02/F03); Free/Pro live with billing. | Public PLG launch; content/SEO; **meeting-bot virality loop** on; Product Hunt / community. | Free→Pro conversion 4–6%; first **$50k MRR**; self-serve funnel instrumented. |
 | **Q3 — Teams + Mobile** | ~30–60k MAU, scaling concurrency | **Team tier** (shared workspaces, admin, SSO-lite, analytics); **mobile app** (F03/Team 6, D11); topic explorer/timeline; integrations (calendar, Slack/Notion export). | PLG + **bottom-up team expansion**; lifecycle/expansion marketing; first sales-assisted Team deals. | Net revenue retention >110%; **$200k MRR**; Team tier ≥20% of new revenue. |
-| **Q4 — Enterprise + regulated** | **~100k MAU, ~5k concurrent peak (D02 Year-1)** | **Enterprise tier**: SSO/SCIM, audit, retention/no-audio modes, **HIPAA/BAA**, data residency (eu-central-1), self-host pilot — all per F04/Team 9 roadmap. | Add **inside sales**; target regulated verticals (health/legal/finance) + mid-market; design-partner case studies. | First **5+ Enterprise contracts**; **$500k–$1M ARR run-rate**; SOC2 Type I in progress; Series-A-ready metrics. |
+| **Q4 — Enterprise + regulated** | **~100k MAU, ~5k concurrent peak (D02 Year-1)** | **Enterprise tier**: SSO/SCIM, audit, retention/no-audio modes, **HIPAA/BAA**, data residency (westeurope), self-host pilot — all per F04/Team 9 roadmap. | Add **inside sales**; target regulated verticals (health/legal/finance) + mid-market; design-partner case studies. | First **5+ Enterprise contracts**; **$500k–$1M ARR run-rate**; SOC2 Type I in progress; Series-A-ready metrics. |
 
 ### 7.1 GTM motion summary
 
@@ -451,7 +451,7 @@ meeting-join platform**, for the **individual KW beachhead**, **web + desktop**,
 | Depth | Domain packs (medical/legal/finance teaching), personalized teaching that learns the user's knowledge gaps, agentic follow-ups (draft the follow-up email/ticket). |
 | Platform | Marketplace/integrations (CRM, ticketing, LMS for edu), API for embedding Aizen explanations elsewhere. |
 | Moat | Org-wide knowledge graph as a searchable "second brain"; cross-meeting memory. |
-| Monetization | Usage-based add-ons, edu tier, vertical SKUs (Aizen for Health/Legal/Finance), self-host/VPC. |
+| Monetization | Usage-based add-ons, edu tier, vertical SKUs (Aizen for Health/Legal/Finance), self-host/VNet. |
 | Scale | Path to D02 north-star (2M MAU / 50k concurrent, global) with regional data residency. |
 
 ---

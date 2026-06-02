@@ -16,34 +16,34 @@ teach** for individual knowledge workers — scoped to the F05 MVP feature set
 | Insights (action items / decisions / open questions) | — |
 | **Lite** Research/RAG (web + citations, top-1) | n-best lattice, large internal-doc KB |
 | Consent capture + `no_audio_retention` + encryption | HIPAA BAA path, SSO/SCIM |
-| Single region (us-east-1), multi-AZ | Multi-region / data residency |
+| Single region (eastus), multi-AZ | Multi-region / data residency |
 | Free + Pro tiers (Stripe) | Team / Enterprise tiers |
 
 ## 2. MVP topology (deliberately boring)
 
 ```mermaid
 flowchart LR
-  C[Web + Desktop client] -->|WebRTC/WS| GW[API+WS Gateway<br/>ALB · Fargate]
+  C[Web + Desktop client] -->|WebRTC/WS| GW[API+WS Gateway<br/>Application Gateway · Container Apps]
   GW --> STT[STT worker<br/>Deepgram streaming]
-  STT -->|TranscriptSegment| K[(Kinesis<br/>per-session shard)]
-  K --> EX[Extraction+Explain worker<br/>Fargate]
+  STT -->|TranscriptSegment| K[(Event Hubs<br/>per-session partition)]
+  K --> EX[Extraction+Explain worker<br/>Container Apps]
   EX --> LLMGW[LLM Gateway<br/>Claude Haiku/Sonnet/Opus]
   EX -->|cards/insights/kg_delta| K
   K -->|WS fan-out| C
-  EX <--> PG[(Aurora Postgres<br/>+ pgvector)]
-  EX <--> R[(Redis)]
+  EX <--> PG[(PostgreSQL Flexible Server<br/>+ pgvector)]
+  EX <--> R[(Azure Cache for Redis)]
   GW <--> PG
-  ALL[S3 audio/artifacts · DynamoDB dedup/audit · Secrets Mgr/KMS] -.-> GW & EX
+  ALL[Blob audio/artifacts · Cosmos DB dedup/audit · Key Vault] -.-> GW & EX
 ```
 
 **Key MVP simplifications (all are documented "grow-up" points):**
-- **Kinesis** (not MSK) for the event log — cheaper, managed, fine at 200
-  concurrent (D13 says MSK comes at Year-1).
-- **Aurora + pgvector** does triple duty: relational, vector (embeddings), and
-  **graph-as-adjacency-tables** — no Neptune yet (D14/D09).
+- **Event Hubs** (not Event Hubs Dedicated) for the event log — cheaper, managed, fine at 200
+  concurrent (D13 says Event Hubs Dedicated comes at Year-1).
+- **PostgreSQL Flexible Server + pgvector** does triple duty: relational, vector (embeddings), and
+  **graph-as-adjacency-tables** — no managed graph DB yet (D14/D09).
 - **Hosted STT (Deepgram)** — no GPU fleet to operate; pure opex.
-- **Fargate** for all compute — no EKS/Karpenter, no GPU ops.
-- Orchestration is the F03·T7 **Session-Conductor** running as a Fargate task per
+- **Container Apps** for all compute — no AKS/cluster autoscaler, no GPU ops.
+- Orchestration is the F03·T7 **Session-Conductor** running as a Container Apps task per
   active session, with stateless extraction/explanation workers behind it.
 
 ## 3. How the lanes show up at MVP
@@ -53,7 +53,7 @@ flowchart LR
 | F01 | Web+desktop capture, preprocessing, Deepgram streaming STT, online diarization, `TranscriptSegment` | Mobile, Teams/Meet, self-host STT, offline diarization refine |
 | F02 | Adapter (D16), extraction → skeleton cards + insights + `kg_delta`, Sonnet explanations, lite web RAG with citations + basic NLI grounding | Large internal KB, n-best, advanced verification, deep historical context optional |
 | F03 | Live transcript view, concept cards (collapsed/expanded), basic timeline, simple list-style "topics"; Session-Conductor + workers; WCAG 2.2 AA core | Graph viz canvas, topic-explorer graph, mobile UX, eval-agent sampling |
-| F04 | Single-region AWS (Fargate, Kinesis, Aurora+pgvector, Redis, S3, DynamoDB), LLM gateway, consent gate, KMS, audit log, CloudWatch+OTel | Multi-region, Neptune, MSK, SOC 2 cert (in progress), HIPAA, SSO |
+| F04 | Single-region Azure (Container Apps, Event Hubs, PostgreSQL Flexible Server+pgvector, Azure Cache for Redis, Blob, Cosmos DB), LLM gateway, consent gate, Key Vault, audit log, Azure Monitor+OTel | Multi-region, managed graph DB, Event Hubs Dedicated, SOC 2 cert (in progress), HIPAA, SSO |
 | F05 | Free (300 min, Haiku-only) + Pro ($20, bounded hours + overage), Stripe, PLG meeting-bot loop | Team/Enterprise, sales motion |
 
 ## 4. MVP latency reality
@@ -68,7 +68,7 @@ MVP needs GPUs or multi-region to hit the budget.
 > and a final is ~2.0 s after audio-end (team-02 §6). That is an internal
 > contradiction (§4 vs §5). Measured from when the concept word is *spoken*,
 > finals-only is ~4.6 s p50 / 9.3 s p95 — it fails the wedge metric; the committed
-> fix is speculative-on-stabilized-partial (D17). It also omits the two Kinesis
+> fix is speculative-on-stabilized-partial (D17). It also omits the two Event Hubs
 > hops + provider RTT. See `12-latency-budget.md`.
 
 ## 5. MVP cost posture (ties to RISK-1 / C-9)

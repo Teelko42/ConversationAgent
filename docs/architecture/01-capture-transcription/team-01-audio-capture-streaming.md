@@ -6,7 +6,7 @@
 >
 > Budget anchor (D07): **capture + stream ≤ 500 ms** of the 3 s p50 / 5 s p95
 > end-to-end target. Scale anchors (D02): 200 / 5,000 / 50,000 concurrent
-> sessions. Cloud (D03): AWS us-east-1 primary. Privacy (D10): consent and
+> sessions. Cloud (D03): Azure eastus primary. Privacy (D10): consent and
 > no-audio-retention are first-class.
 
 ---
@@ -25,7 +25,7 @@
                                          │  Opus/WebRTC (or WS framed PCM)
                                          ▼
                  ┌──────────────────────────────────────────────────┐
-                 │           EDGE INGEST GATEWAY (AWS)               │
+                 │           EDGE INGEST GATEWAY (Azure)             │
                  │  SFU (mediasoup/Janus) | API GW WS | gRPC ingest  │
                  │  • decode Opus→PCM  • resample 48k→16k mono       │
                  │  • per-participant channel split                  │
@@ -120,7 +120,7 @@ The transport from client → edge ingest is the latency-critical hop (most of t
 **Decision (see Decisions §10):**
 
 - **Client → edge: WebRTC** via an **SFU** (mediasoup or Janus, self-hosted on
-  AWS; or a managed SFU like LiveKit) for mic and multi-party. WebRTC's loss
+  Azure; or a managed SFU like LiveKit) for mic and multi-party. WebRTC's loss
   concealment and jitter handling are decisive on real mobile/Wi-Fi networks and
   keep p95 inside budget. The SFU also gives us per-participant tracks → clean
   `channel_role` separation feeding diarization.
@@ -191,16 +191,16 @@ Team 1 emits the touchpoints and honors `no_audio_retention` by never persisting
 |---|---|---|---|
 | Edge transport | WebRTC via **LiveKit** (managed-or-self-host SFU) | self-hosted **mediasoup** cluster | LiveKit accelerates MVP; mediasoup gives cost control + raw track access at scale |
 | Signaling | LiveKit/WebSocket | same | — |
-| TURN | coturn on EC2 (multi-AZ) | coturn ASG + global anycast | UDP-blocked networks |
+| TURN | coturn on Azure VMs (multi-AZ) | coturn VM scale set + global anycast | UDP-blocked networks |
 | Desktop shell | **Tauri** (Rust) | Tauri | smaller, safer, native loopback via Rust crates (cpal/wasapi) vs Electron heft |
 | System-audio (Win/mac/Linux) | WASAPI loopback / ScreenCaptureKit / PipeWire monitor | same | native, no driver install |
 | Mobile capture | AVAudioEngine (iOS) / AudioRecord + MediaProjection (Android) | same | platform-native |
 | Denoise | **RNNoise** | DTLN/deep NS on GPU pool | CPU-cheap MVP; quality at scale |
 | VAD / endpointing | **Silero VAD** | Silero + model-native endpoints | accurate, light, ONNX-portable |
 | Internal transport | **gRPC** bidi | gRPC + D08 stream | typed, backpressure |
-| Event backbone | **AWS MSK (Kafka)** per D08 (F08 final word) | MSK / Kinesis tiered | durable ordered per-session |
+| Event backbone | **Kafka-compatible log (Event Hubs Dedicated)** per D08 (F08 final word) | Event Hubs Dedicated / Event Hubs tiered | durable ordered per-session |
 | Meeting (Zoom) | Zoom **RTMS** marketplace app | + Teams ACS, generic bot | first-party speaker data |
-| Audio archival | S3 (FLAC) when consent allows | S3 + lifecycle to Glacier | D09/D10 |
+| Audio archival | Azure Blob Storage (FLAC) when consent allows | Blob + lifecycle to Archive tier | D09/D10 |
 
 ---
 
@@ -223,7 +223,7 @@ Team 1 emits the touchpoints and honors `no_audio_retention` by never persisting
 
 Partition unit = **`session_id`**. Everything scales horizontally per session.
 
-| Tier | Concurrent sessions | Active audio streams (~1.4 tracks/session avg) | SFU nodes (~500 tracks/node) | Ingest/preproc workers (~150 streams/worker) | Stream partitions (MSK) |
+| Tier | Concurrent sessions | Active audio streams (~1.4 tracks/session avg) | SFU nodes (~500 tracks/node) | Ingest/preproc workers (~150 streams/worker) | Stream partitions (Event Hubs) |
 |---|---|---|---|---|---|
 | MVP | 200 | ~280 | 1–2 | 2–3 | 256 |
 | Year-1 | 5,000 | ~7,000 | ~16 | ~50 | 1,024 |
@@ -235,7 +235,7 @@ Partition unit = **`session_id`**. Everything scales horizontally per session.
   batched 100 ms frames. Internal stream throughput at north-star ≈ 70,000 ×
   256 kbps ≈ **18 Gbps** internal (kept in-region; this is why preprocessing and
   STT colocate with ingest).
-- **Regional sharding (D03):** us-east-1 primary, us-west-2 DR; eu-central-1 for
+- **Regional sharding (D03):** eastus primary, westus DR; westeurope for
   EU residency at Year-1+ — sessions pinned to a home region; no cross-region
   audio.
 - **Backpressure:** SFU drops to lower bitrate before dropping frames; internal
@@ -244,16 +244,18 @@ Partition unit = **`session_id`**. Everything scales horizontally per session.
 
 ---
 
-## 7. Cost (AWS, D02/D03; order-of-magnitude)
+## 7. Cost (Azure, D02/D03; order-of-magnitude)
 
 | Item | Unit basis | MVP (200) | Year-1 (5k) | North-star (50k) |
 |---|---|---|---|---|
-| SFU compute (c7g) | ~500 tracks/node, ~$0.15/hr/node-eq | ~$0.6/hr | ~$15/hr | ~$140/hr |
+| SFU compute (Dpsv5 Arm) | ~500 tracks/node, ~$0.15/hr/node-eq | ~$0.6/hr | ~$15/hr | ~$140/hr |
 | Ingest/preproc (CPU, RNNoise+Silero) | ~150 streams/worker | ~$0.5/hr | ~$12/hr | ~$110/hr |
 | TURN relay egress (≈20% sessions relayed) | $0.05–0.09/GB egress | ~$0.1/hr | ~$3/hr | ~$30/hr |
-| MSK (Kafka) | broker hrs + storage | ~$1.5/hr | ~$8/hr | ~$60/hr (multi-cluster) |
-| S3 audio archival (consented, FLAC ~5MB/min) | $0.023/GB-mo | negligible | ~$300/mo | ~$3k/mo |
+| Event Hubs (Kafka-compatible) | broker hrs + storage | ~$1.5/hr | ~$8/hr | ~$60/hr (multi-cluster) |
+| Blob audio archival (consented, FLAC ~5MB/min) | $0.023/GB-mo | negligible | ~$300/mo | ~$3k/mo |
 | **Approx capture-layer compute run-rate** | per peak hour | **~$3/hr** | **~$38/hr** | **~$340/hr** |
+
+(SKUs mapped to Azure; dollar figures carried from the original model pending Azure repricing.)
 
 > Capture/stream is a *modest* slice of total cost — STT (Team 2) and LLM (F02)
 > dominate. The biggest capture lever is **egress** (TURN + cross-AZ); keep
@@ -264,7 +266,7 @@ Partition unit = **`session_id`**. Everything scales horizontally per session.
 ## 8. Security (D10 touchpoints)
 
 - **In transit:** SRTP (WebRTC) client→edge; TLS for WS/gRPC; mTLS internal.
-- **At rest:** S3 SSE-KMS per-tenant CMK; `no_audio_retention` mode drops
+- **At rest:** Blob encryption at rest with per-tenant Key Vault customer-managed keys; `no_audio_retention` mode drops
   `payload` after STT (no audio at rest).
 - **Consent gate:** ingest refuses frames without a valid `consent_id`; bots
   surface visible recording notice (two-party law, D10).
@@ -280,7 +282,7 @@ Partition unit = **`session_id`**. Everything scales horizontally per session.
 
 **In:** Web (mic via WebRTC) + Desktop Tauri (mic **and** system-audio loopback)
 + Zoom RTMS integration. Server-side resample/denoise/VAD. WebRTC primary, WS
-fallback, TURN. AudioFrame emission to MSK. Consent gate. iOS/Android mic-only
+fallback, TURN. AudioFrame emission to Event Hubs. Consent gate. iOS/Android mic-only
 capture (no system audio at MVP).
 
 **Out (MVP):** Teams/Meet bots; mobile system-audio; deep-NS GPU pool;

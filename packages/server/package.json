@@ -1,0 +1,28 @@
+{
+  "name": "@aizen/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The runnable Aizen app: an HTTP + WebSocket server that bridges browser-mic audio -> Deepgram STT -> intel + enrich over one session bus -> live concept cards pushed back to the browser. Falls back to the deterministic stub spine when keys are absent.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@aizen/contracts": "workspace:*",
+    "@aizen/edge-gateway": "workspace:*",
+    "@aizen/capture": "workspace:*",
+    "@aizen/stt-worker": "workspace:*",
+    "@aizen/intel-worker": "workspace:*",
+    "@aizen/llm-gateway": "workspace:*",
+    "@aizen/research": "workspace:*",
+    "dotenv": "^17.4.2",
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
+  }
+}

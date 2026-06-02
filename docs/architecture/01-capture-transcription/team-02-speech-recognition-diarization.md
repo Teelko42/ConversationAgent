@@ -95,7 +95,7 @@ without blocking live output.
 - **Self-hosted path (Year-1+, enterprise/cost): NVIDIA Parakeet/Canary on NeMo**
   for streaming, **Whisper-large-v3-turbo** for batch/offline correction. Justified
   when (a) per-minute hosted cost at D02 scale exceeds amortized GPU cost, (b)
-  enterprise/self-host tier (D04) requires in-VPC inference, or (c) a regulated
+  enterprise/self-host tier (D04) requires in-VNet inference, or (c) a regulated
   vertical forbids third-party audio egress (D10).
 
 **Cost crossover intuition (D02):** at Year-1 (5,000 concurrent × ~50% speaking
@@ -240,9 +240,9 @@ Unit = streaming STT session (one decoder stream per active speaker-channel).
 
 - Audio leaving to a **hosted** STT vendor is a data-egress + processing event →
   requires DPA/BAA per vendor (manual tasks); regulated tenants pinned to
-  **self-hosted** in-VPC inference.
+  **self-hosted** in-VNet inference.
 - `TranscriptSegment` is PII-bearing text → encrypted in transit (mTLS) and at
-  rest (KMS, F04/F09).
+  rest (Key Vault, F04/F09).
 - `consent.mode` passthrough honored: `transcript_only` keeps text but no audio;
   `no_audio_retention` ensures the decoder never persists frames.
 - PII redaction hook in fusion stage (`pii_redacted` flag) — policy owned by F09.

@@ -6,5 +6,8 @@
   "description": "D15 LLM gateway skeleton — tier routing (D04), cost accounting + ceilings (doc 11), the D17 salience/stability gate, Opus escalation cap. Providers stubbed (real calls need the Anthropic account).",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
-  "scripts": { "build": "tsc -b" }
+  "scripts": { "build": "tsc -b" },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.100.1"
+  }
 }

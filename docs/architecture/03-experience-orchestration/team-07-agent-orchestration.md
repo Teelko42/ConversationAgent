@@ -18,7 +18,7 @@
 |---|---|---|
 | Agent hierarchy, lifecycle, supervision | `ExtractionCapability` | Event backbone (D08) |
 | Task routing & model-tier selection (D04) | `ExplanationCapability` | Datastores (D09): Postgres, vector, graph, Redis |
-| Memory tiers (short/session/long) | `ResearchRetrievalCapability` (RAG + web) | Object storage (S3) |
+| Memory tiers (short/session/long) | `ResearchRetrievalCapability` (RAG + web) | Object storage (Blob) |
 | Context assembly/budgeting | `GraphBuildCapability` | Autoscaling, queues, observability |
 | Summarization pipelines | `InsightExtractionCapability` | Secrets/keys mgmt |
 | Verification & evaluation agents | `EmbeddingCapability` | LLM gateway / rate limits |
@@ -340,7 +340,7 @@ owns the **extraction + explanation** slices and must add minimal overhead.
 |---|---|---|
 | Orchestration runtime | Stateful actor/workflow engine — **Temporal** (or a lightweight in-house Conductor on the event bus) for durable, retryable, idempotent tasks | Durable execution = clean retries/failover (§9); fits stateless-worker model |
 | Conductor state | **Redis** (hot session state) + replay from event bus | Fast blackboard; rebuildable (D09) |
-| Event backbone | **Kafka-class (MSK)/Kinesis** per session, ordered by `seq` | D08; ordered replay enables Conductor failover |
+| Event backbone | **Kafka-compatible log (Event Hubs Dedicated)/Event Hubs** per session, ordered by `seq` | D08; ordered replay enables Conductor failover |
 | LLM access | **LLM gateway** (routing, rate limits, caching, fallback, token accounting) in front of Anthropic Claude tiers + open-weight fallback | D04; central place to enforce tiers/budgets |
 | Prompt caching | Provider prompt cache on stable prefixes | §5/§10 latency + cost |
 | Memory/vector | pgvector (MVP) → dedicated vector DB at scale; Postgres + graph store | D09 |

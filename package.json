@@ -5,6 +5,9 @@
   "type": "module",
   "description": "Aizen — real-time conversation intelligence. Phase 0 foundation: canonical data contracts, the D16 ingress adapter, the supersede/resync seams, the LLM-gateway skeleton, and their executable contract-test suites.",
   "scripts": {
+    "start": "tsx packages/server/src/index.ts",
+    "dev": "tsx watch packages/server/src/index.ts",
+    "spine": "tsx packages/session-conductor/scripts/run-spine.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -b",
@@ -12,6 +15,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.19.0",
     "typescript": "^5.5.4",
     "vitest": "^2.0.5"
@@ -19,5 +23,11 @@
   "packageManager": "pnpm@9.7.0",
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.100.1",
+    "@deepgram/sdk": "^5.4.0",
+    "dotenv": "^17.4.2",
+    "ws": "^8.21.0"
   }
 }

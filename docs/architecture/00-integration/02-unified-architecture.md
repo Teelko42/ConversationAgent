@@ -29,11 +29,11 @@ flowchart TB
     ORC[F03·T7 Orchestration<br/>Session-Conductor + workers]:::f3
   end
 
-  subgraph Platform [F04 Platform — AWS]
-    BUS[(EventBus<br/>Kinesis→MSK D13)]:::p
+  subgraph Platform [F04 Platform — Azure]
+    BUS[(EventBus<br/>Event Hubs→Event Hubs Dedicated D13)]:::p
     LLM[LLM Gateway D15<br/>route·cache·fallback·cost-cap]:::p
-    STORES[(Aurora+pgvector·Neptune·<br/>Redis·S3·DynamoDB D14)]:::p
-    SEC[Consent·KMS·audit·RBAC<br/>F09 controls D10]:::p
+    STORES[(PostgreSQL Flexible Server+pgvector·Cosmos DB Gremlin·<br/>Azure Cache for Redis·Blob·Cosmos DB D14)]:::p
+    SEC[Consent·Key Vault·audit·RBAC<br/>F09 controls D10]:::p
   end
 
   subgraph UX [F03·T6 Experience]
@@ -92,8 +92,8 @@ streaming at every stage, speculative prefetch on partials, and prompt caching.
 | Evidence | F02·T5 | RAG, web + internal search, citation model, fact verification, source ranking. |
 | Experience | F03·T6 | All UI surfaces, workflows, accessibility, multi-platform. Renders F01/F02 contracts by name. |
 | Orchestration | F03·T7 | Session-Conductor + stateless workers, memory, routing, verification/eval agents, failure recovery. |
-| Platform | F04·T8 | AWS infra, EventBus (D13), datastores (D14), LLM gateway (D15), observability, cost, multi-region, DR. |
-| Trust | F04·T9 | Consent loop, encryption/KMS, retention, GDPR/CCPA/HIPAA, enterprise controls, audit, threat model. |
+| Platform | F04·T8 | Azure infra, EventBus (D13), datastores (D14), LLM gateway (D15), observability, cost, multi-region, DR. |
+| Trust | F04·T9 | Consent loop, encryption/Key Vault, retention, GDPR/CCPA/HIPAA, enterprise controls, audit, threat model. |
 | Business | F05·T10 | Personas, market, competition, pricing, MVP scope, roadmap, GTM. |
 
 ## 4. Control loops that cross lanes

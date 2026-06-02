@@ -12,3 +12,11 @@ export {
   type F02Payload,
   type F02Out,
 } from './worker.js';
+
+// --- P2 enrichment ("explain engine", lite): skeleton → enriched card ---
+export { enrichCard, type EnrichOptions } from './enrich.js';
+export {
+  runEnrich,
+  type RunEnrichHandle,
+  type RunEnrichOptions,
+} from './enrich-worker.js';

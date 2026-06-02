@@ -193,3 +193,10 @@ export class LlmGateway {
     return { ok: true, tier, text: res.text, usage: res.usage, costUsd: cost };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Real provider (P2 swap-in). Re-exported so consumers import it from the
+// gateway's public surface; it implements the `LlmProvider` interface above.
+// ---------------------------------------------------------------------------
+export { AnthropicProvider, DEFAULT_MODELS } from './provider-anthropic.js';
+export type { AnthropicProviderOptions } from './provider-anthropic.js';

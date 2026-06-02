@@ -13,7 +13,7 @@
 > consumes M-5's bus pin).
 >
 > **Status:** Binding latency design. Numbers are planning estimates from the lane
-> docs (team-02 §6, team-04 §1, team-08 §4/§7) + standard AWS/Anthropic network
+> docs (team-02 §6, team-04 §1, team-08 §4/§7) + standard Azure/Anthropic network
 > constants; they harden once the §8 instrumentation runs against real traffic.
 >
 > **Headline result:** measured from **utterance-end**, finals-only enrichment
@@ -60,13 +60,13 @@ with every hop (§2–§4), and a committed extraction trigger (§4).
 > F01 data-contracts §1 and Seam-A INV-A2.
 
 **Network/infra constants used below** (planning; team-08 §4/§6, M-5 pins the
-bus = **Kinesis** at MVP):
+bus = **Event Hubs** at MVP):
 
 | Constant | p50 | p95 | Note |
 |---|---:|---:|---|
 | Capture + edge stream (mic → STT ingest) | 110 | 280 | "capture+stream ≤500" budget; L-2 holds |
-| **Bus hop** (Kinesis put → propagate → get) | 80 | 200 | **omitted in the old budget (H-1)**; ×2 on the card path |
-| Internal svc hop (Fargate ↔ LLM gateway) | 5 | 20 | |
+| **Bus hop** (Event Hubs put → propagate → get) | 80 | 200 | **omitted in the old budget (H-1)**; ×2 on the card path |
+| Internal svc hop (Container Apps ↔ LLM gateway) | 5 | 20 | |
 | Anthropic API network RTT (in-region) | 40 | 120 | gateway lookup + network, excl. compute |
 | WS fan-out → client + render paint | 100 | 260 | inside the old "render ≤300" |
 
@@ -216,7 +216,7 @@ job every K segments** (team-04 §1.5). Three ways it misses:
 
 ## 6. Bus hops, RTT, and queueing — the lines the old budget omitted (H-1)
 
-- **Bus = Kinesis at MVP** (M-5 / doc 10 §0). Put→propagate→get ≈ **80 ms p50 /
+- **Bus = Event Hubs at MVP** (M-5 / doc 10 §0). Put→propagate→get ≈ **80 ms p50 /
   200 ms p95 per hop**. The card path crosses it **twice** (final/partial →
   extractor; card → WS fan-out) = **160/400 ms** — **5–13 % of a 3000 ms budget**,
   previously unbudgeted. At Year-1 the extraction→explanation split adds a **third
@@ -276,7 +276,7 @@ estimates; the trace data replaces them with measured p50/p95 per stage.
 partial-vs-final contradiction is resolved by **D17 speculative-on-partial**, and
 the MVP §4↔§5 internal contradiction is named), H-3 (cache-miss reality +
 layered-breakpoint fix + cold-start exemption), M-4 (streaming holds on the
-ribbon, not the card path — now explicit), M-5 (bus pinned to Kinesis, hops
+ribbon, not the card path — now explicit), M-5 (bus pinned to Event Hubs, hops
 budgeted), M-6 (degraded-mode ladder).
 
 **Requires (cross-doc):**

@@ -57,7 +57,7 @@ memory + internal KB are fast (<150 ms); web is the long pole (cache-first).
 | C | **Curated reference corpus** | pre-indexed encyclopedic/domain corpus | <200 ms | T2–T3 | Stable definitions/history without a live web hit. |
 | D | **Live web search** | provider API + result cache | 0.3–3 s | T3–T4 (domain-scored) | Fresh/uncovered facts, current events. |
 
-Channel D is **cache-first**: a Redis/S3-backed result cache keyed by
+Channel D is **cache-first**: a Redis/Blob-backed result cache keyed by
 normalized query + freshness window; identical concept lookups across sessions
 reuse fetched+verified results (huge at scale).
 
@@ -155,14 +155,14 @@ Beyond per-claim citations, Team 5 enriches a concept with:
 | Concern | MVP | Scale | Why |
 |---|---|---|---|
 | Vector store | **pgvector** (D09) | dedicated vector DB (Qdrant/Pinecone/Milvus-class) | D09 trajectory. |
-| Sparse search | Postgres FTS / BM25 | OpenSearch/Elastic | Hybrid recall. |
+| Sparse search | Postgres FTS / BM25 | Azure AI Search/Elastic | Hybrid recall. |
 | Fusion | Reciprocal Rank Fusion | same | Robust dense+sparse merge. |
 | Reranker | hosted/open cross-encoder (BGE-reranker-class) | same, GPU-served | Precision@k. |
 | Embeddings | hosted embedding model + open fallback (D04) | same | Consistent with Team 3 index. |
 | Query planning / verify | **Haiku** bulk, **Sonnet** escalation (D04) | same | Cheap routing + adjudication. |
 | Web search | provider-abstracted (Brave/Bing/Tavily-class) | + multi-provider + cache | Swappable; procurement = manual task. |
 | Content extraction | readability/trafilatura-class | same | Strip boilerplate before embedding. |
-| Cache | Redis (queries) + S3 (fetched docs) | + CDN | Cache-first web; cross-session reuse. |
+| Cache | Redis (queries) + Blob (fetched docs) | + CDN | Cache-first web; cross-session reuse. |
 | NLI verifier | small NLI model or Haiku | + Sonnet adjudication | Per-claim grounding. |
 
 ---
@@ -207,8 +207,8 @@ time-boxing, reranker batching, regional vector indices.
   > **⚠ Hardened by D20 / doc 13 (2026-06-01).** The gate keys on `consent_class`
   > and `pii_present`, which this lane **assumed already set** (A01) — but nothing
   > computed `pii_present` and the natural default was **fail-open**. D20 adds a
-  > named layered PII/PHI classifier (deterministic + NER + Comprehend-Medical/
-  > in-VPC), **recall ≥0.95 PII / ≥0.98 PHI**, and a **fail-closed** default
+  > named layered PII/PHI classifier (deterministic + NER + Azure AI Language
+  > Text Analytics for health / in-VNet), **recall ≥0.95 PII / ≥0.98 PHI**, and a **fail-closed** default
   > (missing/uncertain ⇒ treat as sensitive). Also **INV-9**: the cross-session
   > evidence cache must hold **no personal data** (else it escapes the DSAR
   > cascade — M-9). See `00-integration/13-consent-and-privacy-redesign.md`.

@@ -6,11 +6,13 @@
     { "path": "packages/seam-supersede" },
     { "path": "packages/seam-kg-resync" },
     { "path": "packages/llm-gateway" },
+    { "path": "packages/research" },
     { "path": "packages/edge-gateway" },
     { "path": "packages/capture" },
     { "path": "packages/stt-worker" },
     { "path": "packages/intel-worker" },
     { "path": "packages/web-client" },
-    { "path": "packages/session-conductor" }
+    { "path": "packages/session-conductor" },
+    { "path": "packages/server" }
   ]
 }

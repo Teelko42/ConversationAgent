@@ -65,7 +65,7 @@ before an `AudioFrame` exists.
 | Frame duration | 20 ms (320 samples = 640 bytes) | Matches Opus/WebRTC packetization; balances latency vs overhead. |
 | Endianness | little-endian | x86/ARM default. |
 
-> Raw 48 kHz stereo is captured at the edge for **archival** (S3, D09) when
+> Raw 48 kHz stereo is captured at the edge for **archival** (Blob, D09) when
 > consent allows (D10); the ASR path consumes the normalized 16 kHz mono stream.
 
 ### 2.2 Schema
@@ -91,7 +91,7 @@ before an `AudioFrame` exists.
   "channels": 1,
   "samples": 320,               // per channel
   "payload": "<base64 | ref>",  // see payload modes below
-  "payload_ref": null,          // S3/obj-store URI when payload offloaded
+  "payload_ref": null,          // Blob/obj-store URI when payload offloaded
 
   // --- source & routing meta ---
   "source": {
@@ -128,7 +128,7 @@ before an `AudioFrame` exists.
 |---|---|---|---|
 | Inline | Hot path, real-time STT | base64 PCM (≤ a few KB/frame) | null |
 | Batched-inline | Internal stream efficiency | N frames coalesced (e.g. 100 ms) | null |
-| Offloaded | Archival / large reprocessing | null | `s3://aizen-audio/{tenant}/{session}/{seq_range}.pcm` |
+| Offloaded | Archival / large reprocessing | null | `https://aizenaudio.blob.core.windows.net/{tenant}/{session}/{seq_range}.pcm` |
 
 > On the **real-time hot path** frames are batched to ~100 ms (5×20 ms) before
 > hitting the internal stream to cut per-message overhead while staying inside
@@ -318,7 +318,7 @@ flowchart LR
 ## 4. JSON Schema stubs (for codegen)
 
 > Provided as a starting point; F08/platform owns the schema-registry choice
-> (Confluent/Glue). Both contracts SHOULD be registered with
+> (Confluent/Azure Schema Registry). Both contracts SHOULD be registered with
 > backward-compatible evolution rules.
 
 ```jsonc

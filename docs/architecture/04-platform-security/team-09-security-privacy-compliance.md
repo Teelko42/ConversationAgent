@@ -1,6 +1,6 @@
 # Team 9 — Security, Privacy & Compliance
 
-> Lane **F04** · Product **Aizen** · Cloud **AWS** (D03) · Privacy is first-class
+> Lane **F04** · Product **Aizen** · Cloud **Azure** (D03) · Privacy is first-class
 > (**D10**, this lane owns the authoritative model). Scale targets **D02**.
 >
 > This document defines the controls that make Aizen **lawful to deploy** and
@@ -8,8 +8,8 @@
 > captures **live human conversation audio** across regulated verticals
 > (healthcare, legal, finance) — so consent, audio privacy, encryption, retention,
 > and regulatory posture are existential, not optional. It pairs with
-> `team-08-infrastructure-platform.md`, which provides the substrate (KMS, VPC
-> isolation, CloudTrail, RLS, silo option) these controls run on.
+> `team-08-infrastructure-platform.md`, which provides the substrate (Key Vault, VNet
+> isolation, activity logs, RLS, silo option) these controls run on.
 
 ---
 
@@ -19,29 +19,29 @@
 
 | Pillar | Approach |
 |---|---|
-| **Zero-trust** | No implicit network trust; every service call authenticated (IAM/SigV4 or mTLS), authorized per-tenant; private subnets only; no public DB/cache. |
-| **Defense in depth** | Edge (WAF/Shield) → app (authn/z, input validation) → data (encryption, RLS, KMS) → audit (CloudTrail, immutable logs). |
-| **Least privilege** | Scoped IAM roles per service; no long-lived keys; Secrets Manager + rotation; per-tenant KMS grants. |
-| **Secure SDLC** | SAST (CodeQL), SCA (dependency scanning), IaC scanning (tfsec/Checkov), container scanning (ECR/Inspector), secret scanning (pre-commit + CI), signed images, mandatory review. |
-| **Tenant isolation** | RLS + tenant-scoped keys/prefixes (pooled); silo (dedicated cluster + CMK) for enterprise/HIPAA. |
+| **Zero-trust** | No implicit network trust; every service call authenticated (Entra ID/managed identity or mTLS), authorized per-tenant; private subnets only; no public DB/cache. |
+| **Defense in depth** | Edge (WAF/DDoS Protection) → app (authn/z, input validation) → data (encryption, RLS, Key Vault) → audit (activity logs, immutable logs). |
+| **Least privilege** | Scoped Entra ID + RBAC roles per service; no long-lived keys; Key Vault + rotation; per-tenant Key Vault grants. |
+| **Secure SDLC** | SAST (CodeQL), SCA (dependency scanning), IaC scanning (tfsec/Checkov), container scanning (ACR/Defender for Cloud), secret scanning (pre-commit + CI), signed images, mandatory review. |
+| **Tenant isolation** | RLS + tenant-scoped keys/prefixes (pooled); silo (dedicated cluster + customer-managed key) for enterprise/HIPAA. |
 | **Privacy by design (D10)** | Consent gate before capture; no-retention default for audio; data minimization; PII redaction in logs. |
 
 ### 1.2 Identity & access
 
 ```
-End users        → Cognito / enterprise IdP (SAML/OIDC) → session JWT (short TTL)
-Service-to-service→ IAM roles (IRSA on EKS, task roles on Fargate) / mTLS mesh
-Admin/operator   → SSO + MFA + just-in-time access (AWS IAM Identity Center) +
+End users        → Entra External ID / enterprise IdP (SAML/OIDC) → session JWT (short TTL)
+Service-to-service→ managed identities (workload identity on AKS, managed identity on Container Apps) / mTLS mesh
+Admin/operator   → SSO + MFA + just-in-time access (Entra ID PIM) +
                     session recording for break-glass
-Secrets          → AWS Secrets Manager (rotation) ; never in code/env files
-Keys             → AWS KMS CMKs, per-tenant for silo, per-region for residency
+Secrets          → Azure Key Vault (rotation) ; never in code/env files
+Keys             → Azure Key Vault keys, per-tenant for silo, per-region for residency
 ```
 
 ### 1.3 Data classification (drives every control)
 
 | Class | Examples | Controls |
 |---|---|---|
-| **C4 — Sensitive PII / PHI** | Audio of medical/legal/financial conversations, transcripts, voiceprints | Highest: consent-gated, encryption + CMK, no-retention default, BAA scope, restricted access, full audit |
+| **C4 — Sensitive PII / PHI** | Audio of medical/legal/financial conversations, transcripts, voiceprints | Highest: consent-gated, encryption + customer-managed key, no-retention default, BAA scope, restricted access, full audit |
 | **C3 — Personal data** | User identity, contacts, session metadata | Encrypted, RLS, DSAR-subject, GDPR/CCPA scope |
 | **C2 — Tenant operational** | Cards, graphs, insights derived from C3/C4 | Tenant-isolated, retention-governed |
 | **C1 — Internal/telemetry** | Metrics, scrubbed logs | PII-scrubbed before storage |
@@ -56,18 +56,18 @@ plus control plane (auth, tenant, billing, consent).
 
 | # | STRIDE | Threat | Asset | Mitigation |
 |---|---|---|---|---|
-| T1 | **Spoofing** | Attacker joins/hijacks another tenant's live session | Session, audio | Short-TTL session JWT bound to `tenant_id`+`session_id`; WSS origin checks; per-session capability token; Cognito/SAML authn |
-| T2 | **Spoofing** | Forged service identity injects fake `TranscriptSegment` | Event bus | mTLS/IAM-signed producers; topic ACLs; only Gateway may produce `audio.raw`, only STT may produce `transcript.seg` |
-| T3 | **Tampering** | Modify transcripts/cards in transit or at rest | C2/C4 data | TLS 1.3 in transit; SSE-KMS at rest; checksum/version on artifacts; CloudTrail on KMS+S3 |
+| T1 | **Spoofing** | Attacker joins/hijacks another tenant's live session | Session, audio | Short-TTL session JWT bound to `tenant_id`+`session_id`; WSS origin checks; per-session capability token; Entra External ID/SAML authn |
+| T2 | **Spoofing** | Forged service identity injects fake `TranscriptSegment` | Event bus | mTLS/managed-identity-signed producers; topic ACLs; only Gateway may produce `audio.raw`, only STT may produce `transcript.seg` |
+| T3 | **Tampering** | Modify transcripts/cards in transit or at rest | C2/C4 data | TLS 1.3 in transit; encryption at rest; checksum/version on artifacts; activity logs on Key Vault+Blob |
 | T4 | **Tampering** | Replay/duplicate events to corrupt graph | Event bus | Idempotency on `(session_id, seq)`; monotonic `seq` enforced (D06); dedup table |
-| T5 | **Repudiation** | Tenant denies consent was captured / data was deleted | Consent, audit | Immutable consent ledger + audit trail (CloudTrail + append-only DynamoDB/S3 Object Lock); signed events |
-| T6 | **Info disclosure** | Cross-tenant data leak (the #1 SaaS risk) | All tenant data | RLS on every query; tenant-scoped KMS grants + S3 prefixes + Redis key prefixes; silo option; automated cross-tenant test in CI |
+| T5 | **Repudiation** | Tenant denies consent was captured / data was deleted | Consent, audit | Immutable consent ledger + audit trail (activity logs + append-only Cosmos DB/Blob immutability policy); signed events |
+| T6 | **Info disclosure** | Cross-tenant data leak (the #1 SaaS risk) | All tenant data | RLS on every query; tenant-scoped Key Vault grants + Blob prefixes + Redis key prefixes; silo option; automated cross-tenant test in CI |
 | T7 | **Info disclosure** | Audio/PHI exfiltration via logs or 3rd-party model calls | C4 | PII/PHI scrubbing before log index; no-retention mode; DPA/BAA-governed egress; redaction before LLM where required; self-host LLM tier for strict tenants |
-| T8 | **Info disclosure** | Stolen credentials / leaked secrets | Keys, data | Secrets Manager + rotation; no static keys; GuardDuty + secret scanning; least-priv IAM |
-| T9 | **Denial of service** | Flood Gateway / exhaust GPU/inference budget | Availability, cost | WAF rate limits, Shield Adv, per-tenant quotas, backpressure, token/cost caps per session |
+| T8 | **Info disclosure** | Stolen credentials / leaked secrets | Keys, data | Key Vault + rotation; no static keys; Microsoft Defender for Cloud + secret scanning; least-priv Entra ID + RBAC |
+| T9 | **Denial of service** | Flood Gateway / exhaust GPU/inference budget | Availability, cost | WAF rate limits, DDoS Protection, per-tenant quotas, backpressure, token/cost caps per session |
 | T10 | **Denial of service** | Prompt-injection / malicious audio drives runaway model cost or unsafe output | Cost, integrity | Input bounds, token caps, output filtering, prompt-injection guards (coordinate F02/F03), anomaly alerts |
-| T11 | **Elevation of priv** | User escalates to admin / cross-tenant admin | Control plane | RBAC least-priv; deny-by-default; JIT admin + MFA; CloudTrail on all IAM/role assumes |
-| T12 | **Elevation of priv** | Container escape / lateral movement | Infra | Private subnets, minimal images, no privileged containers, GuardDuty/Inspector, network policies, SG least-priv |
+| T11 | **Elevation of priv** | User escalates to admin / cross-tenant admin | Control plane | RBAC least-priv; deny-by-default; JIT admin + MFA; activity logs on all role assignments |
+| T12 | **Elevation of priv** | Container escape / lateral movement | Infra | Private subnets, minimal images, no privileged containers, Microsoft Defender for Cloud, network policies, NSG least-priv |
 
 **Top risks ranked:** T6 (cross-tenant leak), T7 (audio/PHI disclosure), T9/T10
 (cost/abuse), T1 (session hijack). These get continuous automated testing.
@@ -104,7 +104,7 @@ satisfied for the session.
 | **Per-session consent capture** | Each session has a consent state machine; capture is blocked at the Gateway until consent requirements are met (Team 8 consent gate). |
 | **Two-party / all-party** | Configurable per tenant/jurisdiction: `single-party` (user only) vs `all-party` (every participant must consent). Default to **all-party** for safety; tenant admin can set per jurisdiction. |
 | **Consent mechanisms** | (a) explicit in-app acknowledgment by each participant who has an account; (b) **audible/visible disclosure** ("This conversation is being analyzed by Aizen") emitted at session start for in-room participants; (c) calendar/meeting-bot consent prompt for Zoom/Teams/Meet joins; (d) recorded verbal consent option. |
-| **Consent ledger** | Immutable, append-only record per session: who consented, when, mechanism, jurisdiction, IP/device, consent text version. Stored with Object Lock / append-only (non-repudiation, T5). |
+| **Consent ledger** | Immutable, append-only record per session: who consented, when, mechanism, jurisdiction, IP/device, consent text version. Stored with Blob immutability policy / append-only (non-repudiation, T5). |
 | **Withdrawal** | A participant can revoke mid-session → capture stops for that session and downstream artifacts are flagged for deletion per policy. |
 | **Jurisdiction detection** | Best-effort (tenant config + geo) to choose single vs all-party; conservative default. |
 
@@ -130,12 +130,12 @@ hard precondition.
 
 | Control | Design |
 |---|---|
-| **No-audio-retention mode (DEFAULT for C4/regulated)** | Audio is processed in-memory/in-stream only; `audio.raw` retention = 0 / TTL minimal; **never written to S3**. Only derived artifacts (transcript/cards) persist, and only if their retention is enabled. |
+| **No-audio-retention mode (DEFAULT for C4/regulated)** | Audio is processed in-memory/in-stream only; `audio.raw` retention = 0 / TTL minimal; **never written to Blob**. Only derived artifacts (transcript/cards) persist, and only if their retention is enabled. |
 | **Ephemeral processing** | STT consumes `audio.raw` from the stream and the frames expire; no durable audio copy unless the tenant explicitly opts into retention with consent. |
 | **Transcript-only mode** | Tenant can choose to retain transcripts but never audio. |
 | **Voiceprint / biometric** | Speaker diarization (F01) produces *session-local* speaker labels by default; **persistent voiceprints are OFF by default** (BIPA/biometric-law risk). Persistent voiceprint = explicit opt-in + extra consent + biometric-data handling controls. |
 | **Redaction** | Optional real-time PII/PHI redaction in transcripts (names, MRNs, card numbers) for storage/log paths. |
-| **3rd-party model exposure** | In no-retention/strict mode, audio/transcript sent to hosted STT/LLM is governed by DPA/BAA; strict tenants use the **self-host STT/LLM tier** so no C4 data leaves the VPC. |
+| **3rd-party model exposure** | In no-retention/strict mode, audio/transcript sent to hosted STT/LLM is governed by DPA/BAA; strict tenants use the **self-host STT/LLM tier** so no C4 data leaves the VNet. |
 | **Local/edge option (future)** | On-device partial STT for the most sensitive tenants. |
 
 ---
@@ -144,12 +144,12 @@ hard precondition.
 
 | Layer | Control |
 |---|---|
-| **In transit** | **TLS 1.3** everywhere (client↔edge, edge↔service, service↔service). WSS/WebRTC (DTLS-SRTP for media). ACM-managed certs. Optional **mTLS** service mesh at scale. No plaintext internal hops. |
-| **At rest** | **AES-256** via **SSE-KMS** on S3, Aurora, ElastiCache, OpenSearch, Neptune, DynamoDB, EBS, MSK. No unencrypted store exists. |
-| **Key management** | **AWS KMS** customer-managed CMKs. **Per-tenant CMK for silo/HIPAA tenants**; per-region CMK for residency (EU keys in eu-central-1, never leave). Automatic key rotation; key policies least-priv; CloudTrail on every KMS use. |
-| **Tenant isolation crypto** | Silo tenant data encrypted under its own CMK with a key policy scoped to that tenant's roles — a cross-tenant read fails at the crypto layer, not just the query layer (defense in depth for T6). |
-| **Secrets** | AWS Secrets Manager, rotation enabled, accessed via IAM role, never in code/images/env. |
-| **Envelope encryption** | App-level field encryption for the most sensitive fields (consent ledger, PHI markers) with KMS data keys. |
+| **In transit** | **TLS 1.3** everywhere (client↔edge, edge↔service, service↔service). WSS/WebRTC (DTLS-SRTP for media). Managed certs. Optional **mTLS** service mesh at scale. No plaintext internal hops. |
+| **At rest** | **AES-256** via **encryption at rest** on Blob, PostgreSQL, Azure Cache for Redis, Azure AI Search, graph DB, Cosmos DB, managed disks, Event Hubs. No unencrypted store exists. |
+| **Key management** | **Azure Key Vault** customer-managed keys. **Per-tenant customer-managed key for silo/HIPAA tenants**; per-region key for residency (EU keys in westeurope, never leave). Automatic key rotation; key policies least-priv; activity logs on every Key Vault use. |
+| **Tenant isolation crypto** | Silo tenant data encrypted under its own customer-managed key with a key policy scoped to that tenant's roles — a cross-tenant read fails at the crypto layer, not just the query layer (defense in depth for T6). |
+| **Secrets** | Azure Key Vault, rotation enabled, accessed via managed identity, never in code/images/env. |
+| **Envelope encryption** | App-level field encryption for the most sensitive fields (consent ledger, PHI markers) with Key Vault data keys. |
 
 ---
 
@@ -157,19 +157,19 @@ hard precondition.
 
 | Data | Default retention | Configurable | Deletion |
 |---|---|---|---|
-| Raw audio | **0 (no-retention mode)** | tenant opt-in 0–90 d w/ consent | auto-expire (S3 lifecycle); immediate on revoke |
+| Raw audio | **0 (no-retention mode)** | tenant opt-in 0–90 d w/ consent | auto-expire (Blob lifecycle); immediate on revoke |
 | Transcripts | 30 d | per tenant / per session | DSAR + retention sweep |
 | Cards/graphs/insights | tenant policy | yes | cascade with transcript |
 | Consent ledger / audit | **long (≥ 6 yr where HIPAA)** | regulated minimum | retained for compliance, not deletable by tenant (legal hold) |
 | Telemetry (scrubbed) | 90 d | yes | rolling |
 
-- **Retention engine:** EventBridge-scheduled Step Functions sweep applies
-  per-tenant/per-session policy; S3 lifecycle rules enforce audio expiry; deletes
-  cascade across Aurora, vector, graph, S3, and trigger re-index.
+- **Retention engine:** Event Grid-scheduled Durable Functions sweep applies
+  per-tenant/per-session policy; Blob lifecycle rules enforce audio expiry; deletes
+  cascade across PostgreSQL, vector, graph, Blob, and trigger re-index.
 - **Right to erasure (GDPR Art.17 / CCPA):** a DSAR-delete removes C2/C3/C4 across
   all stores; the **consent/audit ledger is retained** (legal basis) with the
   subject's content redacted/tombstoned.
-- **Crypto-shredding:** for silo tenants, destroying the per-tenant CMK renders
+- **Crypto-shredding:** for silo tenants, destroying the per-tenant customer-managed key renders
   all that tenant's data unrecoverable — fast, provable deletion.
 
 ---
@@ -179,13 +179,13 @@ hard precondition.
 | Requirement | Aizen control |
 |---|---|
 | **Lawful basis / consent** | Consent ledger (§3); processing only on valid basis |
-| **DSAR — access/portability** | Self-serve export (Step Functions job) assembles a subject's data across stores → encrypted package; SLA ≤ 30 d |
+| **DSAR — access/portability** | Self-serve export (Durable Functions job) assembles a subject's data across stores → encrypted package; SLA ≤ 30 d |
 | **DSAR — erasure** | §6 cascade delete + ledger tombstone |
 | **DSAR — rectification** | Edit/correct via app + propagate |
 | **Data minimization** | No-retention default; transcript-only mode; derived-data only |
-| **DPA + sub-processors** | DPA with customers; **sub-processor list** (Anthropic, STT vendor, AWS, search vendor) published; DPAs/SCCs in place with each (manual task) |
-| **Data residency** | EU tenants pinned to eu-central-1 (Team 8 §9); EU PII never crosses to US; SCCs only where transfer unavoidable |
-| **Breach notification** | Incident-response runbook with 72 h GDPR notification path; GuardDuty/Security Hub detection feeds it |
+| **DPA + sub-processors** | DPA with customers; **sub-processor list** (Anthropic, STT vendor, Azure, search vendor) published; DPAs/SCCs in place with each (manual task) |
+| **Data residency** | EU tenants pinned to westeurope (Team 8 §9); EU PII never crosses to US; SCCs only where transfer unavoidable |
+| **Breach notification** | Incident-response runbook with 72 h GDPR notification path; Microsoft Defender for Cloud detection feeds it |
 | **CCPA/CPRA specifics** | "Do not sell/share" (we don't sell), opt-out, sensitive-PI handling, consumer rights portal (shared with DSAR flow) |
 | **DPIA** | Data Protection Impact Assessment for the audio-capture processing (high-risk processing) — manual/legal task |
 
@@ -199,13 +199,13 @@ Aizen acts as a **Business Associate**.
 | Requirement | Control |
 |---|---|
 | **BAA with customers** | Aizen signs BAAs with healthcare/covered-entity customers (HIPAA tier only) |
-| **BAA with sub-processors** | BAA with AWS (available), Anthropic, and STT vendor — **or** use the **self-host STT/LLM tier** so PHI never leaves the VPC (preferred for HIPAA) — manual task |
-| **PHI isolation** | HIPAA tenants = **silo** (dedicated Aurora cluster, per-tenant CMK, optionally dedicated VPC/namespace); no pooling of PHI |
+| **BAA with sub-processors** | BAA with Azure (available), Anthropic, and STT vendor — **or** use the **self-host STT/LLM tier** so PHI never leaves the VNet (preferred for HIPAA) — manual task |
+| **PHI isolation** | HIPAA tenants = **silo** (dedicated PostgreSQL Flexible Server, per-tenant customer-managed key, optionally dedicated VNet/namespace); no pooling of PHI |
 | **No-retention default** | Audio not retained; transcripts encrypted + access-controlled + audited |
-| **Encryption** | AES-256 at rest (CMK) + TLS 1.3 — satisfies the addressable encryption spec |
+| **Encryption** | AES-256 at rest (customer-managed key) + TLS 1.3 — satisfies the addressable encryption spec |
 | **Access controls + audit** | RBAC least-priv, MFA, full audit trail of PHI access (§9/§10), 6-yr audit retention |
 | **Workforce/admin** | JIT access, MFA, training, break-glass with session recording |
-| **HIPAA-eligible AWS services only** | Restrict the HIPAA tier to AWS HIPAA-eligible services |
+| **HIPAA-eligible Azure services only** | Restrict the HIPAA tier to Azure HIPAA-eligible services |
 
 HIPAA is a **gated tier**, not default-on — enabled per tenant with BAA + silo +
 self-host inference.
@@ -216,14 +216,14 @@ self-host inference.
 
 | Control | Design |
 |---|---|
-| **SSO — SAML 2.0 / OIDC** | Cognito federation or direct SAML to Okta/Entra/Google; SP-initiated + IdP-initiated |
+| **SSO — SAML 2.0 / OIDC** | Entra External ID federation or direct SAML to Okta/Entra/Google; SP-initiated + IdP-initiated |
 | **SCIM 2.0** | Automated user/group provisioning + deprovisioning from the IdP |
 | **RBAC** | Roles: Owner, Admin, Member, Viewer, Auditor, Compliance-Officer; per-tenant; least-priv; resource-scoped (sessions/graphs) |
-| **IP allowlist / network policy** | Per-tenant CIDR allowlist enforced at WAF/Gateway; optional PrivateLink ingress for enterprise |
+| **IP allowlist / network policy** | Per-tenant CIDR allowlist enforced at WAF/Gateway; optional Private Link ingress for enterprise |
 | **Audit logs (tenant-facing)** | Tenant admins get a searchable, exportable audit log (logins, access, exports, consent, deletions) |
 | **Session/device policy** | Configurable session TTL, MFA enforcement, device trust |
 | **Data residency selection** | Enterprise tenant chooses region (US/EU) at provisioning |
-| **Self-host / silo tier** | Dedicated infra + CMK + in-VPC inference for the strictest customers |
+| **Self-host / silo tier** | Dedicated infra + customer-managed key + in-VNet inference for the strictest customers |
 | **DLP / retention policy** | Per-tenant retention, redaction, and export controls |
 
 ---
@@ -232,14 +232,14 @@ self-host inference.
 
 | Layer | Source | Storage | Property |
 |---|---|---|---|
-| Infra/API actions | **CloudTrail** (all regions, org trail) | S3 (Object Lock) + OpenSearch | Immutable, tamper-evident |
-| Data access (who read what PHI/PII) | App-emitted access events | Append-only DynamoDB/S3 | Per-`tenant_id`/`session_id`, signed |
-| Consent events | Consent ledger (§3) | S3 Object Lock | Non-repudiation (T5) |
-| Admin/break-glass | IAM Identity Center + session recording | S3 | JIT, reviewed |
-| Security events | **GuardDuty · Security Hub · Inspector · Config** | Security Hub aggregation → SIEM | Alerting + retention |
+| Infra/API actions | **Azure Monitor activity logs** (all regions, tenant-wide) | Blob (immutability policy) + Azure AI Search | Immutable, tamper-evident |
+| Data access (who read what PHI/PII) | App-emitted access events | Append-only Cosmos DB/Blob | Per-`tenant_id`/`session_id`, signed |
+| Consent events | Consent ledger (§3) | Blob immutability policy | Non-repudiation (T5) |
+| Admin/break-glass | Entra ID PIM + session recording | Blob | JIT, reviewed |
+| Security events | **Microsoft Defender for Cloud · Azure Policy** | Defender for Cloud aggregation → SIEM | Alerting + retention |
 
-- **Tamper-evidence:** audit stores use S3 Object Lock (WORM) / append-only;
-  CloudTrail log-file validation on.
+- **Tamper-evidence:** audit stores use Blob immutability policy (WORM) / append-only;
+  activity log validation on.
 - **Retention:** ≥ 1 yr default, **≥ 6 yr for HIPAA tenants**.
 - **Tenant visibility:** tenant-scoped audit export feeds the enterprise audit-log
   feature (§9). The audit trail underpins SOC 2 CC-series controls.
@@ -264,8 +264,8 @@ self-host inference.
 | **0–3 mo (MVP)** | Baseline | Encryption, consent gate, no-retention default, RBAC, audit trail, GDPR/CCPA DPA + DSAR flows, sub-processor list, incident-response runbook, DPIA |
 | **3–6 mo** | **SOC 2 Type I** | Control documentation, auditor engaged, policies (access, change-mgmt, IR, BCP/DR), evidence collection automated (Vanta/Drata-class) |
 | **6–12 mo** | **SOC 2 Type II** | 6-month observation window; this is the enterprise unlock |
-| **9–18 mo** | **HIPAA tier GA** | BAAs (AWS + sub-processors or self-host inference), silo provisioning, PHI audit, HIPAA risk assessment |
-| **12–24 mo** | **GDPR full + ISO 27001** | EU residency (eu-central-1) GA, ISO 27001 for global enterprise, mature DPIA program |
+| **9–18 mo** | **HIPAA tier GA** | BAAs (Azure + sub-processors or self-host inference), silo provisioning, PHI audit, HIPAA risk assessment |
+| **12–24 mo** | **GDPR full + ISO 27001** | EU residency (westeurope) GA, ISO 27001 for global enterprise, mature DPIA program |
 | **Later** | FedRAMP / sector-specific | If pursuing public-sector / further regulated markets |
 
 **Sequencing rationale:** SOC 2 Type II first (broadest enterprise unlock, builds
@@ -278,29 +278,29 @@ silo + BAA + self-host inference), then GDPR-full/ISO 27001 (geo expansion).
 
 ### Architecture
 Zero-trust, defense-in-depth security architecture (§1) layered over Team 8's
-substrate: edge (WAF/Shield) → app (authn/z) → data (KMS/RLS) → audit (CloudTrail).
+substrate: edge (WAF/DDoS Protection) → app (authn/z) → data (Key Vault/RLS) → audit (activity logs).
 Consent gate (§3) is the entry control; no-retention audio (§4) is the privacy
-default; per-tenant/per-region CMKs (§5) enforce isolation and residency.
+default; per-tenant/per-region customer-managed keys (§5) enforce isolation and residency.
 
 ### Technology recommendations
-Cognito + SAML/OIDC + SCIM · IAM Identity Center (JIT admin) · AWS KMS (CMKs) ·
-Secrets Manager · WAF + Shield Adv · GuardDuty + Security Hub + Inspector + Config ·
-CloudTrail (org trail, Object Lock) · S3 Object Lock (WORM ledgers) · Macie
+Entra External ID + SAML/OIDC + SCIM · Entra ID PIM (JIT admin) · Azure Key Vault (keys) ·
+Key Vault (secrets) · WAF + DDoS Protection · Microsoft Defender for Cloud + Azure Policy ·
+Azure Monitor activity logs (tenant-wide, immutability policy) · Blob immutability policy (WORM ledgers) · Microsoft Purview
 (PII/PHI discovery) · compliance-automation (Vanta/Drata-class) · SAST/SCA/IaC/
 secret scanning in CI.
 
 ### Risks
 | Risk | Sev | Mitigation |
 |---|---|---|
-| Cross-tenant data leak (T6) | Critical | RLS + per-tenant CMK + scoped prefixes + silo + CI cross-tenant tests |
+| Cross-tenant data leak (T6) | Critical | RLS + per-tenant customer-managed key + scoped prefixes + silo + CI cross-tenant tests |
 | Audio/PHI disclosure to 3rd-party models (T7) | High | No-retention default, DPA/BAA, redaction, self-host tier |
 | Consent law violation (two-party) | High | Consent gate blocks capture; all-party default; immutable ledger |
 | Biometric-law (BIPA) via voiceprints | Med | Voiceprints OFF by default, opt-in only |
 | Failed/slow SOC 2 → enterprise sales blocked | High | Engage auditor early; automate evidence |
-| Breach + notification miss | High | GuardDuty/Security Hub detection + 72 h IR runbook |
+| Breach + notification miss | High | Microsoft Defender for Cloud detection + 72 h IR runbook |
 
 ### Scalability
-Controls are tenant-scoped and scale with the platform: RLS/CMK per tenant, audit
+Controls are tenant-scoped and scale with the platform: RLS/customer-managed key per tenant, audit
 pipeline on managed services, compliance automation. Silo model isolates blast
 radius as tenant count grows; consent/audit ledgers are append-only and shard by
 `tenant_id`.
@@ -309,35 +309,35 @@ radius as tenant count grows; consent/audit ledgers are append-only and shard by
 This entire document. Substrate provided by Team 8 §1, §6, §10.
 
 ### Cost
-Incremental to Team 8 §8.2: GuardDuty/Security Hub/Inspector/Macie/Config ≈
+Incremental to Team 8 §8.2: Microsoft Defender for Cloud/Microsoft Purview/Azure Policy ≈
 $500/mo (MVP) → $8k (Year-1) → $60k (North-star); compliance automation tool
-~$1.5–3k/mo; Shield Adv $3k/mo from Year-1; auditor fees (SOC 2 ~$30–60k/yr,
+~$1.5–3k/mo; DDoS Protection $3k/mo from Year-1; auditor fees (SOC 2 ~$30–60k/yr,
 HIPAA assessment ~$20–40k) are **one-time/annual professional fees** (manual
-tasks), not infra. Silo/HIPAA tenants carry the dedicated-infra premium (Team 8).
+tasks), not infra. Silo/HIPAA tenants carry the dedicated-infra premium (Team 8). (SKUs mapped to Azure; dollar figures carried from the original model pending Azure repricing.)
 
 ### MVP scope
 Encryption everywhere, consent gate, no-retention audio default, RBAC, basic SSO
-(OIDC), CloudTrail + GuardDuty, GDPR/CCPA DPA + DSAR flows, incident-response
+(OIDC), activity logs + Microsoft Defender for Cloud, GDPR/CCPA DPA + DSAR flows, incident-response
 runbook, audit trail. Defer: SCIM, IP allowlist, HIPAA tier, silo automation,
 SOC 2 evidence automation (start readiness, not certified).
 
 ### Future enhancements
-On-device/edge STT for max privacy; confidential computing (Nitro Enclaves) for
-PHI processing; customer-managed keys (BYOK) via external KMS; FedRAMP; automated
+On-device/edge STT for max privacy; confidential computing (confidential VMs) for
+PHI processing; customer-managed keys (BYOK) via external key store; FedRAMP; automated
 DPIA tooling; differential-privacy analytics; full mTLS mesh; bug-bounty program.
 
 ### Assumptions
 A-SEC-1 two-party consent default (conservative) · A-SEC-2 healthcare use ⇒ HIPAA
 BA role · A-SEC-3 EU residency required for EU enterprise by Year-1 · A-SEC-4
-AWS, Anthropic offer BAAs; STT vendor BAA must be confirmed or self-host used ·
+Azure, Anthropic offer BAAs; STT vendor BAA must be confirmed or self-host used ·
 A-SEC-5 SOC 2 Type II is the primary enterprise gate.
 
 ### Decisions
 **D-SEC-01** consent is a hard gate — no capture before `consented` (§3) ·
 **D-SEC-02** no-audio-retention is the default; persistence is opt-in + consented
 (§4) · **D-SEC-03** voiceprints OFF by default (BIPA) · **D-SEC-04** HIPAA = silo +
-per-tenant CMK + self-host inference (§8) · **D-SEC-05** SOC 2 Type II → HIPAA →
-GDPR-full/ISO sequencing (§11) · **D-SEC-06** per-region CMK; EU keys never leave EU.
+per-tenant customer-managed key + self-host inference (§8) · **D-SEC-05** SOC 2 Type II → HIPAA →
+GDPR-full/ISO sequencing (§11) · **D-SEC-06** per-region customer-managed key; EU keys never leave EU.
 
 ### Tradeoffs
 All-party consent default (safer, more friction) vs single-party (smoother, risky)
@@ -349,7 +349,7 @@ regulated · Aggressive redaction (private) vs full fidelity (better explanation
 
 ### Open questions
 OQ-SEC-1 STT-vendor BAA availability — if none, HIPAA tier must self-host (F01 +
-platform). OQ-SEC-2 Anthropic API vs Bedrock for BAA/residency posture (coordinate
+platform). OQ-SEC-2 Anthropic API vs Azure AI for BAA/residency posture (coordinate
 F02 + Team 8 OQ-PLAT-1). OQ-SEC-3 exact state-by-state consent matrix — needs legal
 counsel. OQ-SEC-4 do we offer BYOK at launch or defer? OQ-SEC-5 in-room
 non-account participant consent UX — coordinate with F03.

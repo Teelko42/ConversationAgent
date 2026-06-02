@@ -13,6 +13,7 @@
     "@aizen/seam-supersede": "workspace:*",
     "@aizen/seam-kg-resync": "workspace:*",
     "@aizen/llm-gateway": "workspace:*",
+    "@aizen/research": "workspace:*",
     "@aizen/edge-gateway": "workspace:*"
   }
 }

@@ -1,53 +1,62 @@
 variable "name" { type = string }
-variable "vpc_cidr" { type = string }
-variable "az_count" { type = number }
+variable "location" { type = string }
+variable "resource_group_name" { type = string }
+variable "vnet_cidr" { type = string }
 
-data "aws_availability_zones" "available" {
-  state = "available"
+# In Azure a subnet is regional (spans all zones in the region), so zone-spread is a
+# property of the resources placed in it — not of the subnet. We carve three tiers:
+#   public  (App Gateway / Front Door origin / NAT)
+#   app     (Container Apps environment — delegated)
+#   data    (PostgreSQL Flexible Server VNet injection — delegated)
+resource "azurerm_virtual_network" "this" {
+  name                = "${var.name}-vnet"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  address_space       = [var.vnet_cidr]
 }
 
-locals {
-  azs = slice(data.aws_availability_zones.available.names, 0, var.az_count)
+resource "azurerm_subnet" "public" {
+  name                 = "${var.name}-public"
+  resource_group_name  = var.resource_group_name
+  virtual_network_name = azurerm_virtual_network.this.name
+  address_prefixes     = [cidrsubnet(var.vnet_cidr, 8, 0)]
 }
 
-resource "aws_vpc" "this" {
-  cidr_block           = var.vpc_cidr
-  enable_dns_support   = true
-  enable_dns_hostnames = true
-  tags                 = { Name = "${var.name}-vpc" }
+resource "azurerm_subnet" "app" {
+  name                 = "${var.name}-app"
+  resource_group_name  = var.resource_group_name
+  virtual_network_name = azurerm_virtual_network.this.name
+  address_prefixes     = [cidrsubnet(var.vnet_cidr, 4, 1)] # /20 — Container Apps wants room
+
+  delegation {
+    name = "container-apps"
+    service_delegation {
+      name    = "Microsoft.App/environments"
+      actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"]
+    }
+  }
 }
 
-# Public (ALB/NAT/Global Accelerator), private-app (Fargate), private-data (Aurora/Redis).
-resource "aws_subnet" "public" {
-  count                   = var.az_count
-  vpc_id                  = aws_vpc.this.id
-  cidr_block              = cidrsubnet(var.vpc_cidr, 8, count.index)
-  availability_zone       = local.azs[count.index]
-  map_public_ip_on_launch = true
-  tags                    = { Name = "${var.name}-public-${count.index}", Tier = "public" }
+resource "azurerm_subnet" "data" {
+  name                 = "${var.name}-data"
+  resource_group_name  = var.resource_group_name
+  virtual_network_name = azurerm_virtual_network.this.name
+  address_prefixes     = [cidrsubnet(var.vnet_cidr, 8, 32)]
+
+  delegation {
+    name = "postgres-flexible"
+    service_delegation {
+      name    = "Microsoft.DBforPostgreSQL/flexibleServers"
+      actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"]
+    }
+  }
 }
 
-resource "aws_subnet" "private" {
-  count             = var.az_count
-  vpc_id            = aws_vpc.this.id
-  cidr_block        = cidrsubnet(var.vpc_cidr, 8, count.index + 10)
-  availability_zone = local.azs[count.index]
-  tags              = { Name = "${var.name}-private-${count.index}", Tier = "private-app" }
-}
+# TODO(MAN-F04-001): NAT Gateway on the public subnet + private endpoints / service
+# endpoints (Blob/Cosmos/Key Vault) so vendor egress stays off the public internet
+# (team-08 §1.3). Redis VNet injection arrives with the Premium SKU.
 
-resource "aws_subnet" "data" {
-  count             = var.az_count
-  vpc_id            = aws_vpc.this.id
-  cidr_block        = cidrsubnet(var.vpc_cidr, 8, count.index + 20)
-  availability_zone = local.azs[count.index]
-  tags              = { Name = "${var.name}-data-${count.index}", Tier = "private-data" }
-}
-
-# TODO(MAN-F04-001): IGW, NAT gateways, route tables, and VPC endpoints
-# (S3/DynamoDB gateway + KMS/Secrets/ECR/Bedrock/CloudWatch interface) — added
-# with the real account so vendor egress stays off the public internet (team-08 §1.3).
-
-output "vpc_id" { value = aws_vpc.this.id }
-output "public_subnet_ids" { value = aws_subnet.public[*].id }
-output "private_subnet_ids" { value = aws_subnet.private[*].id }
-output "data_subnet_ids" { value = aws_subnet.data[*].id }
+output "vnet_id" { value = azurerm_virtual_network.this.id }
+output "public_subnet_id" { value = azurerm_subnet.public.id }
+output "app_subnet_id" { value = azurerm_subnet.app.id }
+output "data_subnet_id" { value = azurerm_subnet.data.id }

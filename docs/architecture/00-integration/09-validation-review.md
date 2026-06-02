@@ -33,9 +33,9 @@ them.
 ### H-1 · The speech→first-card latency headline is not backed by its own arithmetic
 The per-stage budget table (doc 02 §2) sums to **3300 ms** (500+800+700+1000+300)
 — already 300 ms over the **p50 ≤ 3 s** claim — with **no line item** for the
-EventBus hops (the hot path crosses Kinesis/MSK at least twice:
+EventBus hops (the hot path crosses Event Hubs / Kafka-compatible log at least twice:
 `STT→BUS→extract` and `explain→BUS→render`), client↔edge / edge↔provider RTT, or
-queueing under concurrency. Kinesis put→get propagation alone is ~70–200 ms per
+queueing under concurrency. Event Hubs put→get propagation alone is ~70–200 ms per
 hop and is nowhere budgeted.
 
 ### H-2 · "Extract on finals" contradicts the latency computed off partials
@@ -108,7 +108,7 @@ user transcript edits and speaker renames (F03 OQ-5, open).
 **no snapshot message schema** (`snapshot_offer` is a bare boolean with no
 `kg_snapshot` contract), **no resync-request contract** (over what channel, to
 whom), and **no mapping between F02's application-level `delta_seq` and the
-stream's Kafka/Kinesis offset** (replay-by-offset can't serve "give me delta_seq
+stream's Kafka/Event Hubs offset** (replay-by-offset can't serve "give me delta_seq
 410–411"). F03 OQ-3 and F07 OQ-9 both still flag this *open* — the exact thing
 C-7 declares closed.
 
@@ -134,7 +134,7 @@ This is the **highest** wiretap exposure and its mechanism is explicitly open
 (OQ-SEC-5/3), yet the bot is in MVP scope — a launch-blocking contradiction.
 
 ### H-12 · "no_audio_retention" governs only Aizen's stores; sending audio to a 3rd-party STT is itself a disclosure
-"Never written to S3" is true but legally non-load-bearing: transmitting audio to
+"Never written to Blob Storage" is true but legally non-load-bearing: transmitting audio to
 hosted Deepgram-class STT *is* the regulated disclosure/interception event for
 wiretap/HIPAA purposes, and the vendor may buffer/train unless zero-retention is
 contractually enforced (OQ-SEC-1, unconfirmed). The UI "audio not stored" badge
@@ -173,7 +173,7 @@ conversations (RISK-11 realized).
   budgets genuinely add (1700 ms together). The principle holds for the transcript
   ribbon, not the concept-card path the headline measures.
 - **M-5 · EventBus identity unresolved.** The integration diagram says
-  "Kinesis→MSK (D13)"; F01 team-01 cites "MSK (Kafka) per D08." Different tech,
+  "Event Hubs→Kafka-compatible log (D13)"; F01 team-01 cites "Kafka-compatible log (Kafka) per D08." Different tech,
   different latency, different decision pointer — must be pinned before H-1 can be
   validated.
 - **M-6 · LLM-path degraded mode hand-waved.** The hot path is already Sonnet;

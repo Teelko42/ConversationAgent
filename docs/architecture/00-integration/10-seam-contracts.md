@@ -23,20 +23,20 @@
 
 ## 0. M-5 first — pin the EventBus, because every seam rides it
 
-The three seams all assume a concrete bus. Doc 02 says "Kinesis→MSK (D13)";
-F01 team-01 still cites "MSK (Kafka) per D08." That ambiguity must close before a
-`delta_seq`↔offset mapping (Seam C) can even be specified, because Kinesis
-**sequence numbers** and Kafka **offsets** are different position types.
+The three seams all assume a concrete bus. Doc 02 says "Event Hubs→Kafka-compatible log (D13)";
+F01 team-01 still cites "Kafka-compatible log (Kafka) per D08." That ambiguity must close before a
+`delta_seq`↔offset mapping (Seam C) can even be specified, because Event Hubs
+**offsets** and Kafka **offsets** are different position types.
 
 **Binding decision (supersedes the stale D08 "Kafka-class" placeholder):**
 
 | Horizon | Concrete bus | Position token type | Partition/shard key |
 |---|---|---|---|
-| **MVP** (≤200 concurrent) | **AWS Kinesis Data Streams**, one logical stream, per-session **shard** | Kinesis `SequenceNumber` (opaque string, monotonic per shard) | `session_id` |
-| **Year-1** (scale) | **Amazon MSK (Kafka)** behind the same `EventBus` interface | Kafka `(partition, offset)` | `session_id` |
+| **MVP** (≤200 concurrent) | **Azure Event Hubs**, one logical stream, per-session **partition** | Event Hubs `offset` (opaque string, monotonic per partition) | `session_id` |
+| **Year-1** (scale) | **Kafka-compatible log (Event Hubs Dedicated)** behind the same `EventBus` interface | Kafka `(partition, offset)` | `session_id` |
 
 **`EventBus` abstraction contract (F04 owns).** All lanes program against this,
-never against Kinesis/Kafka directly:
+never against Event Hubs/Kafka directly:
 
 ```
 EventBus.append(session_id, message)            -> Position        // opaque token
@@ -44,12 +44,12 @@ EventBus.read(session_id, from: Position|"latest"|"trim_horizon")  // ordered st
 EventBus.resolve(session_id, position_token)     -> Position        // validate/normalize
 ```
 
-- **`Position` is an opaque token.** No consumer parses it. Kinesis
-  `SequenceNumber` and Kafka `(partition,offset)` both serialize into it. This is
+- **`Position` is an opaque token.** No consumer parses it. Event Hubs
+  `offset` and Kafka `(partition,offset)` both serialize into it. This is
   what lets Seam C's resync work identically on both buses.
 - **Per-session total order** is the only ordering guarantee consumers may rely
   on (already stated D08/D13). Cross-session order is undefined.
-- F01's "MSK per D08" reference is **corrected to D13**; D13 is the single
+- F01's "Kafka-compatible log per D08" reference is **corrected to D13**; D13 is the single
   decision pointer. (Action: fix the stale string in
   `01-capture-transcription/team-01-*.md`.)
 
@@ -276,7 +276,7 @@ maintains a per-session index, written on append:
 DeltaIndex[session_id] : delta_seq (uint64) -> Position (opaque)
 ```
 
-Storage: DynamoDB table `kg_delta_index`, PK=`session_id`, SK=`delta_seq`,
+Storage: Cosmos DB table `kg_delta_index`, PK=`session_id`, SK=`delta_seq`,
 attr=`position_token`, TTL = session retention. Tiny (one row per delta). This is
 what makes "replay delta_seq 410→tail" resolvable to "read from Position(410)".
 
@@ -302,8 +302,8 @@ what makes "replay delta_seq 410→tail" resolvable to "read from Position(410)"
 ```
 
 - Materialized **on demand** by F02 (C-7) or on a checkpoint cadence (every N
-  deltas, configurable), persisted to **S3** (`s3://aizen-kg-snapshots/{tenant}/
-  {session}/{snapshot_id}.json`), pointer cached in Redis.
+  deltas, configurable), persisted to **Azure Blob Storage** (`https://aizenkgsnapshots.blob.core.windows.net/{tenant}/
+  {session}/{snapshot_id}.json`), pointer cached in Azure Cache for Redis.
 - `up_to_delta_seq` + `up_to_position` are the splice point: after applying a
   snapshot, F03 resumes the live stream from `up_to_position`'s successor.
 - `content_hash` lets F03 verify it converged (defends M-9 / drift).
@@ -334,7 +334,7 @@ keeping it off the hot data stream avoids polluting `delta_seq` ordering).
 on kg_resync_request(last_applied=L, observed gap, reason):
   gap_size = observed - L - 1
   if reason == "cold_start" or gap_size > max_replay or DeltaIndex lacks Position(L+1):
-       -> serve NEAREST kg_snapshot with up_to_delta_seq >= L      (from S3)
+       -> serve NEAREST kg_snapshot with up_to_delta_seq >= L      (from Blob Storage)
           then stream live deltas from up_to_position.successor
           (if no snapshot fresh enough exists, ask F02 to materialize one now)
   else:  // small contiguous gap
@@ -344,7 +344,7 @@ on kg_resync_request(last_applied=L, observed gap, reason):
 ```
 
 - `snapshot_offer: true` on a live `kg_delta` is now **meaningful**: it tells F03
-  "a checkpoint snapshot ≥ this `delta_seq` exists in S3," so a future gap can be
+  "a checkpoint snapshot ≥ this `delta_seq` exists in Blob Storage," so a future gap can be
   served cheaply. F02 sets it when it last materialized a checkpoint.
 - Handles the three real cases H-9 left open: cold start (snapshot), small gap
   (offset-translated replay), large gap (snapshot + tail).

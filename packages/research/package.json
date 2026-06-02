@@ -1,0 +1,10 @@
+{
+  "name": "@aizen/research",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Lane (P2-C lite) — sourced background / fact-check retrieval. Vendor-neutral WebSearchProvider; Tavily adapter by default (WEB_SEARCH_PROVIDER). Produces web Citations for concept-card grounding (INV-1/2).",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": { "build": "tsc -b" }
+}

@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "types": ["node"]
+  },
+  "references": [
+    { "path": "../contracts" },
+    { "path": "../edge-gateway" },
+    { "path": "../capture" },
+    { "path": "../stt-worker" },
+    { "path": "../intel-worker" },
+    { "path": "../llm-gateway" },
+    { "path": "../research" }
+  ],
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"]
+}

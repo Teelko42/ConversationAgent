@@ -461,13 +461,15 @@ UX cost is **build + delivery**, not per-inference (AI cost is F02). Tie to D02.
 | Item | MVP | Year-1 | North-star | Notes |
 |---|---|---|---|---|
 | Frontend eng (build) | 3 FE + 1 design + 0.5 a11y | 6 FE + 2 design + 1 a11y | 10+ FE + design system team | Largest UX cost is people |
-| CDN/static hosting | ~$50–200/mo | ~$1–3k/mo | ~$15–40k/mo | CloudFront (D03); cache busts on deploy |
+| CDN/static hosting | ~$50–200/mo | ~$1–3k/mo | ~$15–40k/mo | Azure Front Door / CDN (D03); cache busts on deploy |
 | WS fan-out (client share of) | folds into F04 event infra | " | " | Client opens 1 multiplexed WS/session |
 | Server-side diagram/graph-layout render | small | moderate | significant | Cache aggressively; layout is deterministic & reusable |
 | Design-tool / a11y-audit vendors | one-time + annual | annual | annual | Manual tasks §13 |
 
 Client engineering does not scale with MAU (flat per-session render); CDN egress
 is the only MAU-linear UX infra cost and is small relative to AI/STT spend.
+
+(SKUs mapped to Azure; dollar figures carried from the original model pending Azure repricing.)
 
 ---
 

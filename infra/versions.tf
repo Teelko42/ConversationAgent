@@ -2,30 +2,30 @@ terraform {
   required_version = ">= 1.6.0"
 
   required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.50"
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 4.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
     }
   }
 
-  # TODO(MAN-F04-001): point at the account's bootstrap state bucket before first init.
-  # backend "s3" {
-  #   bucket         = "aizen-tfstate-<account-id>"
-  #   key            = "mvp/terraform.tfstate"
-  #   region         = "us-east-1"
-  #   dynamodb_table = "aizen-tfstate-lock"
-  #   encrypt        = true
+  # TODO(MAN-F04-001): point at the subscription's bootstrap state container before first init.
+  # backend "azurerm" {
+  #   resource_group_name  = "aizen-tfstate-rg"
+  #   storage_account_name = "aizentfstate<suffix>"
+  #   container_name       = "tfstate"
+  #   key                  = "mvp/terraform.tfstate"
+  #   use_azuread_auth     = true
   # }
 }
 
-provider "aws" {
-  region = var.region
+provider "azurerm" {
+  features {}
 
-  default_tags {
-    tags = {
-      Project   = "aizen"
-      Env       = var.env
-      ManagedBy = "terraform"
-    }
-  }
+  # subscription_id / tenant_id are read from the environment (ARM_* / `az login`) at init.
 }
+
+provider "random" {}

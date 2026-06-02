@@ -9,3 +9,19 @@ export type { SttProvider, SttResult } from './provider.js';
 export { StubSttProvider } from './provider.js';
 export type { SttHandle } from './worker.js';
 export { runStt } from './worker.js';
+
+// --- P1 streaming seam (real-time) + Deepgram swap-in (BD-03) ---
+export type {
+  SegmentSink,
+  StreamingSttConfig,
+  StreamingSttSession,
+  StreamingSttProvider,
+  StreamingSttHandle,
+} from './streaming.js';
+export { runStreamingStt } from './streaming.js';
+export type {
+  DeepgramProviderOptions,
+  DeepgramLikeSocket,
+  SocketFactory,
+} from './provider-deepgram.js';
+export { DeepgramSttProvider } from './provider-deepgram.js';

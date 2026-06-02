@@ -202,7 +202,7 @@ lexical-only skeletons under extreme load (graceful degradation preserves the
 
 ---
 
-## 6. Cost (illustrative, AWS + Claude per D03/D04)
+## 6. Cost (illustrative, Azure + Claude per D03/D04)
 
 Order-of-magnitude per the D02 tiers; treat as planning figures, not quotes.
 
@@ -212,7 +212,9 @@ Order-of-magnitude per the D02 tiers; treat as planning figures, not quotes.
 | Embedding calls | ~2/cycle | bundled, low | scales linearly, biggest embed driver |
 | Vector store | pgvector on existing PG (MVP) | ~$0 marginal | dedicated DB ($1–4k/mo class) |
 | Graph store | PG adjacency (MVP) | ~$0 marginal | Neo4j-class cluster |
-| Compute (workers) | stateless ECS/EKS | small | autoscaled |
+| Compute (workers) | stateless Container Apps/AKS | small | autoscaled |
+
+(SKUs mapped to Azure; dollar figures carried from the original model pending Azure repricing.)
 
 **Cost control principle (D04):** keep the hot path on Haiku + embeddings; never
 call Sonnet/Opus in the 700 ms extraction path — those are Team 4's streaming

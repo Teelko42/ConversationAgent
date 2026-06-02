@@ -35,10 +35,12 @@
 | **Deepgram** streaming (Nova) | $0.0043 / audio-min | growth-tier rate (pay-go $0.0077) |
 | **Embeddings** | ~$0.02 / MTok | small-model embeddings |
 | **Web search** API | ~$0.008 / query | Brave/Bing-class |
-| **g5.xlarge** (1× A10G 24 GB) | $1.006/hr on-dem · ~$0.60 1-yr RI · ~$0.35 Spot | us-east-1 |
+| **NC-series GPU VM** (1× A10 24 GB) | $1.006/hr on-dem · ~$0.60 1-yr reserved · ~$0.35 spot | eastus |
 
 Spoken English ≈ **140 wpm ≈ 11,000 transcript tokens / session-hour**
 (1 word ≈ 1.3 tokens). This is the workload's "fuel gauge."
+
+(SKUs mapped to Azure; dollar figures carried from the original model pending Azure repricing.)
 
 ---
 
@@ -111,13 +113,13 @@ hidden structure the "inference is 70–85% of cost" claim obscures:
 |---|---:|---:|
 | LLM + retrieval | $0.75 | **$3.33** |
 | STT (hosted) | $0.30 | $0.26 |
-| Infra (Fargate warm, Aurora, Redis, bus, obs, DR, edge) | $0.95 | $0.95 |
+| Infra (Container Apps warm, Azure Database for PostgreSQL Flexible Server, Redis, bus, obs, DR, edge) | $0.95 | $0.95 |
 | **Total / session-hr** | **$2.00** | **≈ $4.54 (mid); $2.7 low – $4.6 high** |
 
 Two structural findings fall out:
 
 - **At MVP scale, infra is ~$0.95/hr — ~half the doc's own $2.00**, because warm
-  Fargate pools, Aurora, observability, and DR are **fixed** costs spread over
+  Container Apps pools, Azure Database for PostgreSQL Flexible Server, observability, and DR are **fixed** costs spread over
   only 4,000 hrs. The "inference is 70–85% of cost" rule is a **scale property**
   (true at Year-1/North-star where volume amortizes fixed infra), **not an MVP
   property.** Believing it at MVP hides that low-volume economics are
@@ -145,10 +147,10 @@ GPU math**. Here it is.
 ### 4.1 STT self-host (Whisper-large-v3-turbo / Parakeet on A10G)
 
 - Turbo RTF ≈ 0.06–0.15 → with streaming chunking, **~8 concurrent real-time
-  streams per A10G** (conservative).
-- g5.xlarge effective $/session-hr at **full utilization**:
+  streams per A10** (conservative).
+- NC-series GPU VM effective $/session-hr at **full utilization**:
   - On-demand: $1.006 ÷ 8 = **$0.126/hr**
-  - 1-yr RI: $0.60 ÷ 8 = **$0.075/hr**
+  - 1-yr reserved: $0.60 ÷ 8 = **$0.075/hr**
   - Spot (batch/burst): $0.35 ÷ 8 = **$0.044/hr**
 - vs **Deepgram $0.26/session-hr**.
 
@@ -160,14 +162,14 @@ concurrent ÷ 8 = **25 GPUs at peak**, but average concurrency = 4,000 hrs ÷ 73
 ### 4.2 The crossover (when self-host STT beats Deepgram)
 
 Self-host wins when sustained utilization keeps a minimal reserved fleet busy.
-With a floor of ~4 RI GPUs ($0.60 × 730 × 4 = **$1,752/mo**, capacity ~32
+With a floor of ~4 reserved GPUs ($0.60 × 730 × 4 = **$1,752/mo**, capacity ~32
 concurrent ≈ up to ~23,000 session-hrs/mo) + Spot burst:
 
-| Volume | Deepgram | Self-host (4 RI floor + Spot burst) | Winner |
+| Volume | Deepgram | Self-host (4 reserved floor + Spot burst) | Winner |
 |---|---:|---:|---|
 | MVP (4,000 hr/mo) | $1,032 | ~$1,750 (floor underused) | **Deepgram** |
 | ~10,000 hr/mo | $2,580 | ~$2,000 | **crossover ≈ here** |
-| Year-1 (400,000 hr/mo) | $103,200 | ~$30–45k (high util RI+Spot) | **Self-host** (2.5–3×) |
+| Year-1 (400,000 hr/mo) | $103,200 | ~$30–45k (high util reserved+Spot) | **Self-host** (2.5–3×) |
 
 **Crossover ≈ 8,000–12,000 session-hrs/mo** (≈ avg 11–16 concurrent sustained) —
 i.e. **just past MVP, early Year-1.** This validates the doc's *timing* claim with

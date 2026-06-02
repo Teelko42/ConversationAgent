@@ -10,7 +10,7 @@ staffing in doc 06. Phases gate on outcomes, not calendar.
 
 | Workstream | Tasks | Owner |
 |---|---|---|
-| Platform | AWS org/accounts/budgets (MAN-F04-001), VPC, Fargate, Kinesis, Aurora+pgvector, Redis, S3, DynamoDB, Secrets Mgr/KMS, CI/CD, OTel+CloudWatch | Platform |
+| Platform | Azure tenant/subscriptions/budgets (MAN-F04-001), VNet, Container Apps, Event Hubs, PostgreSQL Flexible Server+pgvector, Azure Cache for Redis, Blob, Cosmos DB, Key Vault, CI/CD, OTel+Azure Monitor | Platform |
 | Contracts | Lock `AudioFrame`/`TranscriptSegment` (F01) + `ConceptCard`/`KG*`/`InsightItem` (F02) in a schema registry; codegen | F01+F02 |
 | Edge | WebRTC/WS gateway: auth, `seq` assigner, consent gate stub | F01+Platform |
 | Capture | Web + desktop (system-audio) capture → `AudioFrame` | F01 |
@@ -46,7 +46,7 @@ staffing in doc 06. Phases gate on outcomes, not calendar.
 **Goal:** chargeable, lawful, launchable.
 
 - F05: Free (300 min, Haiku-only) + Pro (bounded hours + overage) via Stripe (MAN-F05-003); per-tier caps enforced at the gateway.
-- F04·T9: consent UX (F03) ↔ consent gate (F04) ↔ `no_audio_retention` end-to-end; encryption/KMS; audit log; privacy/legal counsel sign-off (MAN, High).
+- F04·T9: consent UX (F03) ↔ consent gate (F04) ↔ `no_audio_retention` end-to-end; encryption/Key Vault; audit log; privacy/legal counsel sign-off (MAN, High).
 - WCAG 2.2 AA core pass; accessibility-audit vendor engaged.
 - SOC 2 Type II program **started** (auditor engaged, MAN-F04 High) — cert lands later.
 - First meeting-join path: **Zoom bot** (Marketplace app, MAN-F01-001 High).
@@ -66,11 +66,11 @@ staffing in doc 06. Phases gate on outcomes, not calendar.
 ## Phase 5 — Scale & expand (Months 7–12, → Year-1 D02)
 
 Pull scaling triggers (doc 04) and roadmap items as demand appears:
-- MSK migration; self-host STT on EKS+Karpenter GPU (cost lever, RISK-1).
-- Neptune graph + knowledge-graph **visualization**; mobile apps.
+- Event Hubs Dedicated migration; self-host STT on AKS GPU node pools (cost lever, RISK-1).
+- Managed graph DB (Cosmos DB Gremlin) + knowledge-graph **visualization**; mobile apps.
 - Teams/Meet joins; multi-language start.
 - SOC 2 cert achieved → SSO/SCIM/RBAC + **Team/Enterprise** tiers + sales-assisted motion.
-- DR to us-west-2.
+- DR to westus.
 
 ## Critical path & dependencies
 
@@ -80,6 +80,6 @@ P0 spine ──> P1 STT ──> P2 understanding(wedge) ──> P3 monetize/hard
    └ contracts ─┘             └ adapter D16 (needs P1 real TranscriptSegment)
 ```
 
-Hard external gates (track in `NEEDS_USER.md`): AWS billing owner (P0), STT +
+Hard external gates (track in `NEEDS_USER.md`): Azure billing owner (P0), STT +
 Anthropic + web-search accounts (P1–P2), Stripe + Zoom app + legal sign-off (P3),
 design partners + SOC 2 auditor (P3–P4).
