@@ -20,3 +20,20 @@ export {
   type RunEnrichHandle,
   type RunEnrichOptions,
 } from './enrich-worker.js';
+
+// --- P2 sentence explain engine: explain a sentence + break down words + answer questions ---
+export {
+  explainSentence,
+  looksLikeQuestion,
+  pickKeyWords,
+  type ExplainInput,
+  type ExplainOptions,
+} from './explain.js';
+
+// --- F1 follow-up engine: answer a typed question about an explained sentence ---
+export {
+  answerFollowup,
+  type FollowupInput,
+  type FollowupContext,
+  type FollowupOptions,
+} from './explain.js';

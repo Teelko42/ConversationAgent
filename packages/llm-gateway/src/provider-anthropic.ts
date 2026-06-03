@@ -43,6 +43,12 @@ export interface AnthropicProviderOptions {
   system?: string;
   /** Injectable client (tests). Defaults to a real `Anthropic` from the key. */
   client?: Pick<Anthropic, 'messages'>;
+  /**
+   * Per-request timeout (ms). The SDK default is ~10 minutes — effectively
+   * "forever" for a live UI — so we bound it so a wedged model call surfaces as a
+   * normal error (the gateway degrades) instead of an endless spinner. Default 25s.
+   */
+  requestTimeoutMs?: number;
 }
 
 /** The default system preamble — Aizen's role, kept stable so it caches well. */
@@ -56,6 +62,7 @@ export class AnthropicProvider implements LlmProvider {
   private readonly client: Pick<Anthropic, 'messages'>;
   private readonly models: Record<Tier, string>;
   private readonly system: string;
+  private readonly requestTimeoutMs: number;
 
   constructor(opts: AnthropicProviderOptions) {
     if (!opts.apiKey && !opts.client) {
@@ -64,6 +71,7 @@ export class AnthropicProvider implements LlmProvider {
     this.client = opts.client ?? new Anthropic({ apiKey: opts.apiKey });
     this.models = { ...DEFAULT_MODELS, ...opts.models };
     this.system = opts.system ?? DEFAULT_SYSTEM;
+    this.requestTimeoutMs = opts.requestTimeoutMs ?? 25000;
   }
 
   async complete(req: CompletionRequest): Promise<CompletionResult> {
@@ -73,15 +81,20 @@ export class AnthropicProvider implements LlmProvider {
       DEFAULT_MAX_TOKENS[req.tier],
     );
 
-    const msg = await this.client.messages.create({
-      model,
-      max_tokens,
-      // cache the stable preamble so re-reads bill at 0.1× input (doc 11).
-      system: [
-        { type: 'text', text: this.system, cache_control: { type: 'ephemeral' } },
-      ],
-      messages: [{ role: 'user', content: req.prompt }],
-    });
+    const msg = await this.client.messages.create(
+      {
+        model,
+        max_tokens,
+        // cache the stable preamble so re-reads bill at 0.1× input (doc 11).
+        system: [
+          { type: 'text', text: this.system, cache_control: { type: 'ephemeral' } },
+        ],
+        messages: [{ role: 'user', content: req.prompt }],
+      },
+      // Bound the call + cap retries so a wedged/overloaded request can't hang the
+      // live UI (SDK default is ~10 min with 2 retries).
+      { timeout: this.requestTimeoutMs, maxRetries: 1 },
+    );
 
     const text = msg.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')

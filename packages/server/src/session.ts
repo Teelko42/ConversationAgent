@@ -26,12 +26,8 @@ import {
   type LlmProvider,
 } from '@aizen/llm-gateway';
 import { makeWebSearchProvider, type WebSearchProvider } from '@aizen/research';
-import {
-  runIntel,
-  runEnrich,
-  type RunIntelHandle,
-  type RunEnrichHandle,
-} from '@aizen/intel-worker';
+import { explainSentence, answerFollowup } from '@aizen/intel-worker';
+import type { FollowupAnswer, SentenceExplanation } from '@aizen/contracts';
 import {
   StubSttProvider,
   runStt,
@@ -54,12 +50,85 @@ export interface SessionHandle {
   mode: 'live' | 'demo';
   /** Feed raw PCM16LE 16 kHz mono audio (live mode); no-op in demo mode. */
   sendAudio(pcm: Uint8Array): void;
+  /**
+   * On-demand: explain one transcript sentence — plain meaning + a breakdown of
+   * its key words, and (when it is a question) a short web-grounded answer.
+   * Driven by an F03 click, so it runs only for sentences the user picks.
+   */
+  explain(segmentId: string, text: string): Promise<SentenceExplanation>;
+  /**
+   * On-demand: answer a user-typed FOLLOW-UP question about a sentence that was
+   * just explained, grounded in the recent transcript context + web sources (F1).
+   * `askId` is the client-generated correlation id echoed back on the reply frame.
+   *
+   * `clientContext` carries the sentence + recent transcript the BROWSER is asking
+   * about. It is preferred over this session's own rolling buffer because the
+   * buffer is empty on a freshly (re)connected session — the browser keeps the
+   * transcript across reconnects, the server does not — so without it a
+   * context-dependent follow-up asked after a reconnect would lose its grounding.
+   * Falls back to the server-side buffer when absent (older client / safety).
+   *
+   * Always resolves (degraded on a stubbed/capped gateway) — never throws.
+   */
+  ask(
+    segmentId: string,
+    question: string,
+    askId: string,
+    clientContext?: { sentence?: string; transcript?: string[] },
+  ): Promise<FollowupAnswer>;
   stop(): Promise<void>;
+}
+
+/** How many recent FINAL transcript lines to keep as follow-up context. */
+const FOLLOWUP_CONTEXT_LINES = 12;
+
+/** A TranscriptSegment (F01) carries these; an AudioFrame / F02 envelope does not. */
+function isFinalTranscript(env: unknown): env is { segment_id: string; text: string } {
+  const e = env as { segment_id?: unknown; text?: unknown; is_final?: unknown; message_type?: unknown };
+  return (
+    !!e &&
+    e.message_type === undefined &&
+    typeof e.segment_id === 'string' &&
+    typeof e.text === 'string' &&
+    e.is_final === true
+  );
 }
 
 /** Per-session safety ceilings (doc 11) — cost is this project's #1 risk. */
 const TENANT_CEILING_USD = 5;
 const OPUS_CALL_CAP = 4;
+
+/**
+ * Hard ceiling on a single on-demand explain/follow-up. The engine already bounds
+ * its own web-search + model calls, but this is the backstop that GUARANTEES the
+ * WS handler always gets a reply to send: if anything upstream wedges past this, we
+ * resolve a degraded result instead of leaving the browser on "Answering…" forever.
+ */
+const ONDEMAND_TIMEOUT_MS = 30000;
+
+/**
+ * Resolve `p`, but if it hasn't settled within `ms`, resolve `onTimeout()` instead
+ * (and swallow a late rejection). Never rejects — so the caller always has a value
+ * to reply with.
+ */
+function withTimeout<T>(p: Promise<T>, ms: number, onTimeout: () => T): Promise<T> {
+  return new Promise<T>((resolve) => {
+    const timer = setTimeout(() => resolve(onTimeout()), ms);
+    if (typeof (timer as { unref?: () => void }).unref === 'function') {
+      (timer as { unref?: () => void }).unref!();
+    }
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(onTimeout());
+      },
+    );
+  });
+}
 
 /** Build the LLM gateway: real Anthropic if keyed, else the deterministic stub. */
 function buildGateway(cfg: AppConfig): LlmGateway {
@@ -104,13 +173,28 @@ export async function createSession(
     tavilyApiKey: cfg.tavilyApiKey,
   });
 
-  // Forward every bus envelope to the browser (subscribe before workers publish).
-  const unsubForward = bus.subscribe(sessionId, 0, onEnvelope);
+  // A short rolling buffer of recent FINAL transcript lines, kept so a typed
+  // follow-up ("what did he mean by that?") can be answered against conversation
+  // context — the explain path never sees the transcript, but a follow-up must.
+  // Keyed by segment_id (a finalized segment can be re-emitted) and capped.
+  const recentFinals: { segment_id: string; text: string }[] = [];
+  function rememberFinal(segment_id: string, text: string): void {
+    const at = recentFinals.findIndex((r) => r.segment_id === segment_id);
+    if (at >= 0) recentFinals[at] = { segment_id, text };
+    else {
+      recentFinals.push({ segment_id, text });
+      if (recentFinals.length > FOLLOWUP_CONTEXT_LINES) recentFinals.shift();
+    }
+  }
 
-  // Lane D + enrichment first, so they see every later F01/F02 envelope.
-  const intel: RunIntelHandle = runIntel(sessionId, bus, gateway, { consent });
-  const enrich: RunEnrichHandle = runEnrich(sessionId, bus, gateway, {
-    research: status.search === 'tavily' ? research : undefined,
+  // Forward every bus envelope to the browser (subscribe before any producer).
+  // The live view shows transcript sentences; explanations are produced on demand
+  // (per the F03 click → `explain`), not auto-emitted per term — so no extraction
+  // or enrichment worker is wired here. We also snapshot final transcript lines
+  // into `recentFinals` here (the session already sees every envelope it forwards).
+  const unsubForward = bus.subscribe(sessionId, 0, (env) => {
+    if (isFinalTranscript(env)) rememberFinal(env.segment_id, env.text);
+    onEnvelope(env);
   });
 
   let mode: 'live' | 'demo';
@@ -154,15 +238,70 @@ export async function createSession(
     sessionId,
     mode,
     sendAudio: (pcm) => stream?.sendAudio(pcm),
+    explain: (segmentId, text) =>
+      withTimeout(
+        explainSentence(
+          { segment_id: segmentId, session_id: sessionId, tenant_id: cfg.tenantId, text },
+          gateway,
+          { research: status.search === 'tavily' ? research : undefined },
+        ),
+        ONDEMAND_TIMEOUT_MS,
+        () => ({
+          id: `se_${segmentId}`,
+          session_id: sessionId,
+          tenant_id: cfg.tenantId,
+          segment_id: segmentId,
+          sentence: text,
+          explanation: 'Timed out while explaining — please try again.',
+          breakdown: [],
+          is_question: false,
+          answer: null,
+          sources: [],
+          state: 'degraded',
+        }),
+      ),
+    ask: (segmentId, question, _askId, clientContext) => {
+      // Prefer the context the client shipped with the ask (its model survives WS
+      // reconnects, whereas this session's `recentFinals` starts empty after one).
+      // Fall back to the named segment's sentence, then the most recent final line,
+      // and to the server-side rolling buffer for the transcript.
+      const clientTranscript = (clientContext?.transcript ?? [])
+        .map((t) => (typeof t === 'string' ? t.trim() : ''))
+        .filter(Boolean);
+      const clientSentence = (clientContext?.sentence ?? '').trim();
+      const about = recentFinals.find((r) => r.segment_id === segmentId);
+      const sentence =
+        clientSentence || about?.text || recentFinals[recentFinals.length - 1]?.text || '';
+      const transcript = clientTranscript.length > 0 ? clientTranscript : recentFinals.map((r) => r.text);
+      return withTimeout(
+        answerFollowup(
+          {
+            segment_id: segmentId,
+            session_id: sessionId,
+            tenant_id: cfg.tenantId,
+            question,
+            context: { sentence, transcript },
+          },
+          gateway,
+          { research: status.search === 'tavily' ? research : undefined },
+        ),
+        ONDEMAND_TIMEOUT_MS,
+        () => ({
+          id: `fu_${segmentId}`,
+          session_id: sessionId,
+          tenant_id: cfg.tenantId,
+          segment_id: segmentId,
+          question,
+          answer: null,
+          sources: [],
+          state: 'degraded',
+        }),
+      );
+    },
     stop: async () => {
       capture?.stop();
       sttStub?.stop();
       if (stream) await stream.stop();
-      // let in-flight extraction + enrichment settle, then detach.
-      await intel.drain().catch(() => undefined);
-      await enrich.drain().catch(() => undefined);
-      intel.stop();
-      enrich.stop();
       unsubForward();
     },
   };

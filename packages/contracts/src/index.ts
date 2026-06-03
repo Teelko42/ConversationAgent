@@ -10,6 +10,8 @@ export * from './consent.js';
 export * from './audio-frame.js';
 export * from './transcript-segment.js';
 export * from './concept-card.js';
+export * from './sentence-explanation.js';
+export * from './followup-answer.js';
 export * from './kg.js';
 export * from './insight.js';
 export * from './resync.js';

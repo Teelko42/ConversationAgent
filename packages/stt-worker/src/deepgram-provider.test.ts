@@ -1,22 +1,30 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { TranscriptSegment } from '@aizen/contracts';
 import { DeepgramSttProvider, type DeepgramLikeSocket } from './index.js';
 
 /** A controllable fake of the Deepgram live socket. */
 function makeFakeSocket() {
   const handlers: Record<string, (arg: unknown) => void> = {};
+  let keepAlives = 0;
   const socket = {
     on: (ev: string, cb: (arg: unknown) => void) => {
       handlers[ev] = cb;
     },
     sendMedia: () => {},
     sendCloseStream: () => {},
+    sendKeepAlive: () => {
+      keepAlives += 1;
+    },
     close: () => {},
     waitForOpen: async () => {},
   } as unknown as DeepgramLikeSocket;
   return {
     socket,
     emit: (m: unknown) => handlers['message']?.(m),
+    /** Simulate Deepgram (or the network) closing the live socket. */
+    emitClose: () => handlers['close']?.({ code: 1011 }),
+    /** How many KeepAlive frames the heartbeat has sent. */
+    keepAliveCount: () => keepAlives,
   };
 }
 
@@ -78,5 +86,84 @@ describe('DeepgramSttProvider — F01 lifecycle mapping (§3.4)', () => {
     const finals = segs.filter((s) => s.is_final);
     expect(finals).toHaveLength(2);
     expect(finals[0]!.segment_id).not.toBe(finals[1]!.segment_id);
+  });
+});
+
+describe('DeepgramSttProvider — KeepAlive heartbeat (socket survives recording pauses)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('sends KeepAlive frames on a cadence below the idle-close window', async () => {
+    const fake = makeFakeSocket();
+    const provider = new DeepgramSttProvider({
+      apiKey: 'x',
+      connect: async () => fake.socket,
+      keepAliveMs: 5000,
+    });
+
+    const session = await provider.open({ session_id: 's-uuid', tenant_id: 't-uuid' }, () => {});
+    expect(fake.keepAliveCount()).toBe(0);
+
+    // A 30 s recording pause would idle-close Deepgram (~10 s) without heartbeats;
+    // here the heartbeat fires every 5 s so the socket stays open the whole time.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(fake.keepAliveCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(25000);
+    expect(fake.keepAliveCount()).toBe(6);
+
+    await session.finish();
+  });
+
+  it('stops the heartbeat after finish() so a closed session leaks no timer', async () => {
+    const fake = makeFakeSocket();
+    const provider = new DeepgramSttProvider({
+      apiKey: 'x',
+      connect: async () => fake.socket,
+      keepAliveMs: 5000,
+    });
+    const session = await provider.open({ session_id: 's-uuid', tenant_id: 't-uuid' }, () => {});
+
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(fake.keepAliveCount()).toBe(1);
+
+    await session.finish();
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(fake.keepAliveCount()).toBe(1); // no further frames after finish
+  });
+
+  it('stops the heartbeat when the socket closes on its own', async () => {
+    const fake = makeFakeSocket();
+    const provider = new DeepgramSttProvider({
+      apiKey: 'x',
+      connect: async () => fake.socket,
+      keepAliveMs: 5000,
+    });
+    await provider.open({ session_id: 's-uuid', tenant_id: 't-uuid' }, () => {});
+
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(fake.keepAliveCount()).toBe(1);
+
+    fake.emitClose();
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(fake.keepAliveCount()).toBe(1); // heartbeat cleared on close
+  });
+
+  it('honours keepAliveMs:0 to disable the heartbeat entirely', async () => {
+    const fake = makeFakeSocket();
+    const provider = new DeepgramSttProvider({
+      apiKey: 'x',
+      connect: async () => fake.socket,
+      keepAliveMs: 0,
+    });
+    const session = await provider.open({ session_id: 's-uuid', tenant_id: 't-uuid' }, () => {});
+
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(fake.keepAliveCount()).toBe(0);
+
+    await session.finish();
   });
 });

@@ -78,12 +78,44 @@ async function main(): Promise<void> {
         session?.sendAudio(new Uint8Array(data));
         return;
       }
-      // text control frames (currently only an explicit stop)
+      // text control frames: stop, explain-this-sentence (F03 click), or ask a
+      // typed follow-up about an explained sentence (F1).
+      let msg: {
+        type?: string;
+        segment_id?: string;
+        text?: string;
+        question?: string;
+        ask_id?: string;
+        sentence?: string;
+        transcript?: string[];
+      };
       try {
-        const msg = JSON.parse(data.toString('utf8')) as { type?: string };
-        if (msg.type === 'stop') void session?.stop();
+        msg = JSON.parse(data.toString('utf8'));
       } catch {
-        /* ignore malformed control frames */
+        return; // ignore malformed control frames
+      }
+      if (msg.type === 'stop') {
+        void session?.stop();
+      } else if (msg.type === 'explain' && msg.segment_id && msg.text) {
+        const { segment_id, text } = msg;
+        session
+          ?.explain(segment_id, text)
+          .then((explanation) => send({ type: 'explanation', explanation }))
+          .catch((err: unknown) =>
+            send({ type: 'explain_error', segment_id, message: String((err as Error)?.message ?? err) }),
+          );
+      } else if (msg.type === 'ask' && msg.segment_id && msg.question && msg.ask_id) {
+        const { segment_id, question, ask_id, sentence, transcript } = msg;
+        // The client ships the sentence + recent transcript it's asking about, so a
+        // follow-up is answerable even on a freshly (re)connected session whose own
+        // context buffer is still empty. The session prefers this, falling back to
+        // its rolling buffer when absent.
+        session
+          ?.ask(segment_id, question, ask_id, { sentence, transcript })
+          .then((answer) => send({ type: 'answer', ask_id, answer }))
+          .catch((err: unknown) =>
+            send({ type: 'answer_error', ask_id, message: String((err as Error)?.message ?? err) }),
+          );
       }
     });
 

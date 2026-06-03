@@ -41,6 +41,8 @@ export interface DeepgramLikeSocket {
   on(event: 'error', cb: (e: Error) => void): void;
   sendMedia(payload: ArrayBuffer | ArrayBufferView | Blob): void;
   sendCloseStream(message: listen.ListenV1CloseStream): void;
+  /** Send a Deepgram `KeepAlive` control frame to reset its idle-close timer. */
+  sendKeepAlive(): void;
   close(): void;
   waitForOpen(): Promise<unknown>;
 }
@@ -60,6 +62,12 @@ export interface DeepgramProviderOptions {
   connect?: SocketFactory;
   /** Max ms to wait for the live socket to open before failing (default 8000). */
   openTimeoutMs?: number;
+  /**
+   * Heartbeat interval (ms) for the `KeepAlive` frames that hold the live socket
+   * open through recording pauses. Must stay below Deepgram's ~10 s idle-close
+   * window. Default 5000. Set to 0 to disable the heartbeat.
+   */
+  keepAliveMs?: number;
 }
 
 /** Deepgram live endpoint host (overridable only via the injected factory). */
@@ -128,6 +136,9 @@ function wrapWsSocket(ws: WebSocket, openTimeoutMs: number): DeepgramLikeSocket 
     sendCloseStream(): void {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'CloseStream' }));
     },
+    sendKeepAlive(): void {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'KeepAlive' }));
+    },
     close(): void {
       try {
         ws.close();
@@ -171,6 +182,7 @@ function wrapWsSocket(ws: WebSocket, openTimeoutMs: number): DeepgramLikeSocket 
 export class DeepgramSttProvider implements StreamingSttProvider {
   private readonly connect: SocketFactory;
   private readonly model: string;
+  private readonly keepAliveMs: number;
 
   constructor(opts: DeepgramProviderOptions) {
     if (!opts.apiKey && !opts.connect) {
@@ -178,12 +190,28 @@ export class DeepgramSttProvider implements StreamingSttProvider {
     }
     this.model = opts.model ?? 'nova-2';
     this.connect = opts.connect ?? defaultConnect(opts);
+    this.keepAliveMs = opts.keepAliveMs ?? 5000;
   }
 
   async open(cfg: StreamingSttConfig, onSegment: SegmentSink): Promise<StreamingSttSession> {
     const full = { ...cfg, language: cfg.language ?? 'en-US', model: cfg.model ?? this.model };
     const socket = await this.connect(full);
     const mapper = new UtteranceMapper(full, onSegment);
+
+    // KeepAlive heartbeat. A live session's Deepgram socket is opened ONCE and
+    // reused for every start/stop of the browser mic. During a recording pause the
+    // browser stops sending PCM, and Deepgram closes an idle live connection after
+    // ~10 s — after which `sendMedia` silently no-ops (socket not OPEN), so pressing
+    // record again streams into a dead socket and no transcripts ever come back
+    // until the page is refreshed (which builds a fresh session + socket). Periodic
+    // KeepAlive frames reset that idle timer so the socket survives pauses.
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    const stopHeartbeat = (): void => {
+      if (heartbeat !== undefined) {
+        clearInterval(heartbeat);
+        heartbeat = undefined;
+      }
+    };
 
     socket.on('message', (m) => {
       if (m.type === 'Results') mapper.onResults(m as DgResults);
@@ -194,12 +222,22 @@ export class DeepgramSttProvider implements StreamingSttProvider {
       // eslint-disable-next-line no-console
       console.error('[deepgram] socket error:', e);
     });
+    // If the socket dies anyway (vendor/network), stop the heartbeat rather than
+    // spin forever writing KeepAlives into a closed socket.
+    socket.on('close', () => stopHeartbeat());
 
     await socket.waitForOpen().catch(() => undefined);
+
+    if (this.keepAliveMs > 0) {
+      heartbeat = setInterval(() => socket.sendKeepAlive(), this.keepAliveMs);
+      // Don't let the heartbeat alone keep the Node event loop alive.
+      (heartbeat as { unref?: () => void }).unref?.();
+    }
 
     return {
       sendAudio: (pcm) => socket.sendMedia(pcm as ArrayBuffer | ArrayBufferView),
       finish: async () => {
+        stopHeartbeat();
         mapper.flush();
         try {
           socket.sendCloseStream({ type: listen.ListenV1CloseStream.Type.CloseStream });

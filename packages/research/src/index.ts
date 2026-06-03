@@ -50,6 +50,13 @@ export interface TavilyProviderOptions {
   searchDepth?: 'basic' | 'advanced';
   /** Inject a fetch (tests). Defaults to the global fetch (Node 20+). */
   fetchImpl?: typeof fetch;
+  /**
+   * Abort the request after this many ms. Node's global `fetch` has no overall
+   * response timeout, so without this a stalled Tavily connection hangs forever —
+   * and because a grounded answer always runs a search first, that wedges the
+   * whole explain/follow-up call (the "Answering… forever" symptom). Default 9s.
+   */
+  timeoutMs?: number;
 }
 
 /** Shape of the bits of the Tavily response we consume. */
@@ -66,27 +73,43 @@ interface TavilyResponse {
 export class TavilyWebSearchProvider implements WebSearchProvider {
   private readonly endpoint: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly timeoutMs: number;
 
   constructor(private readonly opts: TavilyProviderOptions) {
     if (!opts.apiKey) throw new Error('TavilyWebSearchProvider: apiKey is required');
     this.endpoint = opts.endpoint ?? 'https://api.tavily.com/search';
     this.fetchImpl = opts.fetchImpl ?? fetch;
+    this.timeoutMs = opts.timeoutMs ?? 9000;
   }
 
   async search(query: string, opts: WebSearchOptions = {}): Promise<WebSearchResult> {
-    const res = await this.fetchImpl(this.endpoint, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${this.opts.apiKey}`,
-      },
-      body: JSON.stringify({
-        query,
-        max_results: opts.maxResults ?? 4,
-        search_depth: this.opts.searchDepth ?? 'basic',
-        include_answer: true,
-      }),
-    });
+    // Bound the request: abort after `timeoutMs` so a stalled connection can't hang
+    // the caller forever. The abort rejects this promise, which the explain/follow-up
+    // engines catch and degrade to "no sources" — no answer is left wedged.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    if (typeof (timer as { unref?: () => void }).unref === 'function') {
+      (timer as { unref?: () => void }).unref!(); // don't keep the event loop alive
+    }
+    let res: Response;
+    try {
+      res = await this.fetchImpl(this.endpoint, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${this.opts.apiKey}`,
+        },
+        body: JSON.stringify({
+          query,
+          max_results: opts.maxResults ?? 4,
+          search_depth: this.opts.searchDepth ?? 'basic',
+          include_answer: true,
+        }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
     if (!res.ok) {
       throw new Error(`tavily search failed: ${res.status} ${res.statusText}`);
     }

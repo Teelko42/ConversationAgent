@@ -18,6 +18,10 @@ coverage/
 
 # Generated JSON Schema is committed (it's the registry artifact); build output is not
 
+# Local build/feature notes — kept out of the repo
+HOW_IT_WAS_BUILT.md
+New_Feature.md
+
 # Terraform (infra/)
 .terraform/
 *.tfstate

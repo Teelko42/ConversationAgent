@@ -36,6 +36,21 @@ describe('TavilyWebSearchProvider', () => {
     const p = new TavilyWebSearchProvider({ apiKey: 'k', fetchImpl: fakeFetch });
     await expect(p.search('x')).rejects.toThrow(/401/);
   });
+
+  it('aborts (does not hang) when the request exceeds the timeout', async () => {
+    // A fetch that never resolves on its own — only the AbortController can end it.
+    // Without the timeout this await would hang forever (the real "Answering…"
+    // forever bug); with it, the request is aborted and the promise rejects.
+    const hangingFetch = ((_url: string, init?: { signal?: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () =>
+          reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+        );
+      })) as unknown as typeof fetch;
+
+    const p = new TavilyWebSearchProvider({ apiKey: 'k', fetchImpl: hangingFetch, timeoutMs: 20 });
+    await expect(p.search('x')).rejects.toThrow();
+  });
 });
 
 describe('makeWebSearchProvider', () => {
