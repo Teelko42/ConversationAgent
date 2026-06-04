@@ -139,6 +139,50 @@ describe('explainSentence with user-provided sources (F2 — BYO sources)', () =
     expect(out.sources[0]).toMatchObject({ type: 'web' });
     expect(out.sources[1]).toMatchObject({ type: 'user', url: 'https://notes/paris' });
   });
+
+  it('carries source provenance onto the citation type (F3 §4: file / obsidian / user)', async () => {
+    // A file-derived source (origin:'file') cites as type:'file'; an Obsidian note
+    // (origin:'obsidian') as type:'obsidian'; a plain paste / no origin as 'user'.
+    const out = await explainSentence(
+      { ...input, text: 'When does Project X ship?' },
+      new LlmGateway(new UserGroundedProvider(), new CostMeter({ tenantCeilingUsd: 10, opusCallCap: 4 })),
+      {
+        userSources: [
+          { id: 'f1', origin: 'file', title: 'brief.md', text: 'Project X ships in Q4.' },
+          { id: 'o1', origin: 'obsidian', title: 'notes/x.md', text: 'X ships alongside the Q4 launch.' },
+          { id: 'p1', text: 'A pasted note with no origin.' },
+        ],
+      },
+    );
+    expect(() => SentenceExplanationSchema.parse(out)).not.toThrow();
+    expect(out.sources).toHaveLength(3);
+    expect(out.sources[0]).toMatchObject({ type: 'file', title: 'brief.md' });
+    expect(out.sources[1]).toMatchObject({ type: 'obsidian', title: 'notes/x.md' });
+    expect(out.sources[2]).toMatchObject({ type: 'user' });
+  });
+
+  it('grounds the EXPLANATION step in connected sources, not only the answer', async () => {
+    // The explanation prompt (the first hop) must fold in the user's notes so the
+    // meaning itself reflects their vault — and stay byte-for-byte unchanged when
+    // there are none.
+    const withSrc = new UserGroundedProvider();
+    await explainSentence(
+      { ...input, text: 'What is Zephyr?' },
+      new LlmGateway(withSrc, new CostMeter({ tenantCeilingUsd: 10, opusCallCap: 4 })),
+      { userSources: [{ id: 'o', origin: 'obsidian', title: 'notes/zephyr.md', text: 'Zephyr is our mobile app codename.' }] },
+    );
+    const explainPrompt = withSrc.prompts.find((p) => p.includes('"breakdown"'))!;
+    expect(explainPrompt).toContain('connected their own notes');
+    expect(explainPrompt).toContain('Zephyr is our mobile app codename.');
+
+    const noSrc = new UserGroundedProvider();
+    await explainSentence(
+      { ...input, text: 'What is Zephyr?' },
+      new LlmGateway(noSrc, new CostMeter({ tenantCeilingUsd: 10, opusCallCap: 4 })),
+    );
+    const plainPrompt = noSrc.prompts.find((p) => p.includes('"breakdown"'))!;
+    expect(plainPrompt).not.toContain('connected their own notes');
+  });
 });
 
 describe('explain heuristics', () => {

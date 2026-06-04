@@ -7,6 +7,8 @@ import {
   AccountSchema,
   IdentitySchema,
   SavedSessionSchema,
+  StoredSourceSchema,
+  SourceQuotaStatusSchema,
   QuotaStatusSchema,
   TierSchema,
   ExplanationSourceSchema,
@@ -16,6 +18,7 @@ import {
   makeAccount,
   makeIdentity,
   makeSavedSession,
+  makeStoredSource,
   makeExplanationSource,
   makeUserSource,
   SESSION,
@@ -172,7 +175,17 @@ describe('BYO user sources (New_Feature.md F2 §4)', () => {
     expect(ExplanationSourceSchema.safeParse(makeExplanationSource({ url: '' })).success).toBe(false);
   });
 
+  it('accepts file/obsidian provenance types with no url (F3 §4 / F4 §5)', () => {
+    expect(
+      ExplanationSourceSchema.safeParse({ citation_id: 'c', type: 'file', title: 'brief.md', snippet: 'x' }).success,
+    ).toBe(true);
+    expect(
+      ExplanationSourceSchema.safeParse({ citation_id: 'c', type: 'obsidian', title: 'notes/x.md' }).success,
+    ).toBe(true);
+  });
+
   it('rejects malformed sources (unknown type, out-of-range score)', () => {
+    // 'doc' is still NOT a known type even after adding file/obsidian.
     expect(ExplanationSourceSchema.safeParse({ citation_id: 'c', type: 'doc', url: 'u' }).success).toBe(
       false,
     );
@@ -182,10 +195,44 @@ describe('BYO user sources (New_Feature.md F2 §4)', () => {
     ).toBe(false);
   });
 
-  it('UserSource round-trips: text required, title/url optional', () => {
+  it('UserSource round-trips: text required, title/url/origin optional', () => {
     expect(UserSourceSchema.safeParse(makeUserSource()).success).toBe(true);
     expect(UserSourceSchema.safeParse({ id: 'u', text: 'just a pasted note' }).success).toBe(true);
+    // origin is an optional, bounded enum.
+    expect(UserSourceSchema.safeParse({ id: 'u', text: 'a file', origin: 'file' }).success).toBe(true);
+    expect(UserSourceSchema.safeParse({ id: 'u', text: 'x', origin: 'nope' }).success).toBe(false);
     // text is required.
     expect(UserSourceSchema.safeParse({ id: 'u', title: 'no body' }).success).toBe(false);
+  });
+});
+
+describe('stored sources (New_Feature.md F3 Phase B §4)', () => {
+  it('a golden StoredSource validates', () => {
+    expect(StoredSourceSchema.safeParse(makeStoredSource()).success).toBe(true);
+  });
+
+  it('origin is exactly file | paste | obsidian; mime/expires optional/nullable', () => {
+    expect(StoredSourceSchema.safeParse(makeStoredSource({ origin: 'paste', mime: undefined })).success).toBe(true);
+    expect(StoredSourceSchema.safeParse(makeStoredSource({ origin: 'obsidian', expires_at_us: 123 })).success).toBe(true);
+    expect(StoredSourceSchema.safeParse(makeStoredSource({ origin: 'web' as never })).success).toBe(false);
+  });
+
+  it('carries consent forward and requires non-negative bytes', () => {
+    expect(StoredSourceSchema.safeParse(makeStoredSource({ consent_class: 'sensitive', pii_present: true })).success).toBe(true);
+    expect(StoredSourceSchema.safeParse(makeStoredSource({ bytes: -1 })).success).toBe(false);
+    expect(StoredSourceSchema.safeParse(makeStoredSource({ consent_class: 'public' as never })).success).toBe(false);
+  });
+
+  it('SourceQuotaStatus allows a null byte limit (Enterprise configurable)', () => {
+    expect(
+      SourceQuotaStatusSchema.safeParse({
+        tier: 'enterprise',
+        used_bytes: 5_000,
+        limit_bytes: null,
+        count: 3,
+        retention_window_days: null,
+        exceeded: false,
+      }).success,
+    ).toBe(true);
   });
 });

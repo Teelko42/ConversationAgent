@@ -17,6 +17,11 @@ import { fileURLToPath } from 'node:url';
 import { createContext, runInContext } from 'node:vm';
 
 const CLIENT_PATH = fileURLToPath(new URL('../public/client.js', import.meta.url));
+// S0 source library + the F4 Obsidian seam load (in index.html) BEFORE client.js,
+// exposing window.AizenSources / window.AizenObsidian. The harness mirrors that load
+// order so client.js's rewired BYO-sources path (S0) runs exactly as in the browser.
+const SOURCES_PATH = fileURLToPath(new URL('../public/sources.js', import.meta.url));
+const OBSIDIAN_PATH = fileURLToPath(new URL('../public/obsidian.js', import.meta.url));
 
 // Every id the client looks up via getElementById.
 const ID_LIST = [
@@ -243,6 +248,13 @@ function makeEl(tag: string, doc: El): El {
       return makeEl(tag, doc);
     },
     focus() {},
+    // Fire the element's own click listeners (e.g. a styled button that proxies to a
+    // hidden <input>). A real <input type=file>.click() opens a native dialog that
+    // can't be driven headlessly, so file tests still set `.files` + dispatch 'change'
+    // on the input directly; this just lets a test click the proxy button safely.
+    click() {
+      (el._listeners['click'] || []).slice().forEach((fn) => fn({ type: 'click' }));
+    },
     // Scroll APIs the client uses to keep the explanation tab in view. No layout
     // engine here, so they just record the last call for assertions.
     scrollTop: 0,
@@ -528,6 +540,9 @@ export function loadClient(
     clearTimeout,
   });
 
+  // Load the S0 library + Obsidian seam first (they assign to window), then client.js.
+  runInContext(readFileSync(SOURCES_PATH, 'utf8'), ctx);
+  runInContext(readFileSync(OBSIDIAN_PATH, 'utf8'), ctx);
   runInContext(readFileSync(CLIENT_PATH, 'utf8'), ctx);
 
   return {

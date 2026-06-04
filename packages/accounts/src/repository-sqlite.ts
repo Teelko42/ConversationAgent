@@ -18,7 +18,7 @@
  * calls.
  */
 import { createRequire } from 'node:module';
-import type { Account, Identity, SavedSession, StoredArtifact } from '@aizen/contracts';
+import type { Account, Identity, SavedSession, StoredArtifact, StoredSource } from '@aizen/contracts';
 import type { AccountRepository } from './repository.js';
 
 /** The minimal `node:sqlite` surface we use (typed locally; see header note). */
@@ -81,6 +81,21 @@ CREATE TABLE IF NOT EXISTS artifacts (
   PRIMARY KEY (session_id, id)
 );
 CREATE INDEX IF NOT EXISTS idx_artifacts_session ON artifacts(session_id, account_id);
+CREATE TABLE IF NOT EXISTS sources (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  origin TEXT NOT NULL,
+  mime TEXT,
+  bytes INTEGER NOT NULL,
+  text TEXT NOT NULL,
+  consent_class TEXT NOT NULL,
+  pii_present INTEGER NOT NULL,
+  created_at_us INTEGER NOT NULL,
+  updated_at_us INTEGER NOT NULL,
+  expires_at_us INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_sources_account ON sources(account_id);
 `;
 
 export class SqliteAccountRepository implements AccountRepository {
@@ -230,6 +245,64 @@ export class SqliteAccountRepository implements AccountRepository {
       .all(sessionId, accountId)
       .map(rowToArtifact);
   }
+
+  // --- stored sources (F3 Phase B) — all reads scoped by account_id ---
+  async addSource(source: StoredSource): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO sources
+           (id, account_id, title, origin, mime, bytes, text, consent_class, pii_present, created_at_us, updated_at_us, expires_at_us)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET title=excluded.title, origin=excluded.origin, mime=excluded.mime,
+           bytes=excluded.bytes, text=excluded.text, consent_class=excluded.consent_class,
+           pii_present=excluded.pii_present, updated_at_us=excluded.updated_at_us, expires_at_us=excluded.expires_at_us`,
+      )
+      .run(
+        source.id,
+        source.account_id,
+        source.title,
+        source.origin,
+        source.mime ?? null,
+        source.bytes,
+        source.text,
+        source.consent_class,
+        source.pii_present ? 1 : 0,
+        source.created_at_us,
+        source.updated_at_us,
+        source.expires_at_us,
+      );
+  }
+
+  async getSource(accountId: string, id: string): Promise<StoredSource | null> {
+    const row = this.db.prepare(`SELECT * FROM sources WHERE id = ? AND account_id = ?`).get(id, accountId);
+    return row ? rowToSource(row) : null;
+  }
+
+  async listSources(accountId: string): Promise<StoredSource[]> {
+    return this.db
+      .prepare(`SELECT * FROM sources WHERE account_id = ? ORDER BY created_at_us DESC`)
+      .all(accountId)
+      .map(rowToSource);
+  }
+
+  async countSources(accountId: string): Promise<number> {
+    const row = this.db.prepare(`SELECT COUNT(*) AS c FROM sources WHERE account_id = ?`).get(accountId);
+    return Number(row?.c ?? 0);
+  }
+
+  async sumSourceBytes(accountId: string): Promise<number> {
+    const row = this.db
+      .prepare(`SELECT COALESCE(SUM(bytes), 0) AS b FROM sources WHERE account_id = ?`)
+      .get(accountId);
+    return Number(row?.b ?? 0);
+  }
+
+  async deleteSource(accountId: string, id: string): Promise<boolean> {
+    const existed = await this.getSource(accountId, id);
+    if (!existed) return false;
+    this.db.prepare(`DELETE FROM sources WHERE id = ? AND account_id = ?`).run(id, accountId);
+    return true;
+  }
 }
 
 /**
@@ -313,4 +386,23 @@ function rowToArtifact(r: Record<string, unknown>): StoredArtifact {
     payload,
     created_at_us: num(r.created_at_us),
   };
+}
+
+function rowToSource(r: Record<string, unknown>): StoredSource {
+  const out: StoredSource = {
+    id: str(r.id),
+    account_id: str(r.account_id),
+    title: str(r.title),
+    origin: str(r.origin) as StoredSource['origin'],
+    bytes: num(r.bytes),
+    text: str(r.text),
+    consent_class: str(r.consent_class) as StoredSource['consent_class'],
+    pii_present: num(r.pii_present) !== 0,
+    created_at_us: num(r.created_at_us),
+    updated_at_us: num(r.updated_at_us),
+    expires_at_us: numOrNull(r.expires_at_us),
+  };
+  const mime = strOrNull(r.mime);
+  if (mime) out.mime = mime;
+  return out;
 }

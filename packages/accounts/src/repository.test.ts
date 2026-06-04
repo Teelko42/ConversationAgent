@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { makeAccount, makeIdentity, makeSavedSession, type StoredArtifact } from '@aizen/contracts';
+import { makeAccount, makeIdentity, makeSavedSession, makeStoredSource, type StoredArtifact } from '@aizen/contracts';
 import { InMemoryAccountRepository, type AccountRepository } from './repository.js';
 import { SqliteAccountRepository } from './repository-sqlite.js';
 import { PgAccountRepository } from './repository-postgres.js';
@@ -145,6 +145,38 @@ for (const backend of BACKENDS) {
         expect(await repo.deleteSavedSession(ACC_A, SESS_1)).toBe(true);
         expect(await repo.listArtifacts(ACC_A, SESS_1)).toHaveLength(0);
         expect(await repo.countSavedSessions(ACC_A)).toBe(0);
+      }),
+    );
+
+    it(
+      'stores, counts, sums, scopes, and deletes stored sources (F3 Phase B)',
+      withRepo(async (repo) => {
+        await repo.createAccount(makeAccount({ id: ACC_A }));
+        await repo.createAccount(makeAccount({ id: ACC_B }));
+        await repo.addSource(makeStoredSource({ id: 'src-1', account_id: ACC_A, title: 'a.md', origin: 'file', bytes: 100 }));
+        await repo.addSource(makeStoredSource({ id: 'src-2', account_id: ACC_A, title: 'b.md', origin: 'obsidian', bytes: 250 }));
+
+        expect(await repo.countSources(ACC_A)).toBe(2);
+        expect(await repo.sumSourceBytes(ACC_A)).toBe(350);
+        expect((await repo.listSources(ACC_A)).map((s) => s.title).sort()).toEqual(['a.md', 'b.md']);
+        expect((await repo.getSource(ACC_A, 'src-1'))?.origin).toBe('file');
+
+        // Account-scoped: B sees / sums / gets nothing of A's.
+        expect(await repo.getSource(ACC_B, 'src-1')).toBeNull();
+        expect(await repo.listSources(ACC_B)).toHaveLength(0);
+        expect(await repo.countSources(ACC_B)).toBe(0);
+        expect(await repo.sumSourceBytes(ACC_B)).toBe(0);
+        expect(await repo.deleteSource(ACC_B, 'src-1')).toBe(false); // cannot delete A's
+
+        // Upsert (same id) updates in place, not duplicates; delete frees bytes.
+        await repo.addSource(makeStoredSource({ id: 'src-1', account_id: ACC_A, title: 'a.md', origin: 'file', bytes: 120, text: 'updated' }));
+        expect(await repo.countSources(ACC_A)).toBe(2);
+        expect(await repo.sumSourceBytes(ACC_A)).toBe(370);
+        expect((await repo.getSource(ACC_A, 'src-1'))?.text).toBe('updated');
+
+        expect(await repo.deleteSource(ACC_A, 'src-1')).toBe(true);
+        expect(await repo.countSources(ACC_A)).toBe(1);
+        expect(await repo.sumSourceBytes(ACC_A)).toBe(250);
       }),
     );
   });

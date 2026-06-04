@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import type { Entitlement, Tier } from '@aizen/contracts';
 import { AccountService } from './service.js';
 import { InMemoryAccountRepository } from './repository.js';
-import { QuotaExceededError } from './quota.js';
+import { QuotaExceededError, SourceQuotaExceededError } from './quota.js';
+import { DEFAULT_ENTITLEMENTS } from './entitlements.js';
 import type { ExternalIdentity } from './auth-provider.js';
 
 /** A deterministic service: fixed clock + a counter-based id generator. */
@@ -159,5 +161,81 @@ describe('AccountService cross-account isolation (team-09 T6)', () => {
     expect(await svc.deleteResource(b.id, sid)).toBe(false);
     // A still owns it.
     expect((await svc.getResource(a.id, sid))?.title).toBe('A only');
+  });
+});
+
+describe('AccountService.saveSource — stored sources, byte quota (F3 §5)', () => {
+  /** A service whose Free tier has a tiny byte cap, to exercise the limit fast. */
+  function tinyCapService(maxSourceBytes: number) {
+    let n = 0;
+    const ids = () => `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}`;
+    const ents: Record<Tier, Entitlement> = {
+      ...DEFAULT_ENTITLEMENTS,
+      free: { ...DEFAULT_ENTITLEMENTS.free, max_source_bytes: maxSourceBytes },
+    };
+    return new AccountService({ repo: new InMemoryAccountRepository(), genId: ids, nowMs: () => 1_700_000_000_000, entitlements: ents });
+  }
+
+  it('persists extracted text + stamps a retention deadline; metered in bytes', async () => {
+    const svc = makeService();
+    const { account } = await svc.upsertIdentity(ext());
+    const s = await svc.saveSource(account.id, {
+      title: 'brief.md',
+      origin: 'file',
+      mime: 'text/markdown',
+      text: 'hello world',
+      consentClass: 'standard',
+      piiPresent: false,
+    });
+    expect(s.bytes).toBe(Buffer.byteLength('hello world', 'utf8'));
+    expect(s.expires_at_us).not.toBeNull(); // Free retention window applied
+    const q = await svc.sourceQuotaStatus(account.id);
+    expect(q).toMatchObject({ used_bytes: s.bytes, count: 1, exceeded: false });
+    expect(q.limit_bytes).toBe(DEFAULT_ENTITLEMENTS.free.max_source_bytes);
+  });
+
+  it('hard-rejects a save that exceeds the byte cap with a typed SourceQuotaExceededError', async () => {
+    const svc = tinyCapService(10);
+    const { account } = await svc.upsertIdentity(ext());
+    let thrown: unknown;
+    try {
+      await svc.saveSource(account.id, { title: 'big', origin: 'file', text: 'way over ten bytes', consentClass: 'standard', piiPresent: false });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(SourceQuotaExceededError);
+    expect((thrown as SourceQuotaExceededError).body).toMatchObject({ error: 'quota_exceeded', tier: 'free', limit: 10 });
+    // nothing persisted
+    expect((await svc.sourceQuotaStatus(account.id)).used_bytes).toBe(0);
+  });
+
+  it('re-saving the same source updates it and counts only the byte delta', async () => {
+    const svc = tinyCapService(8);
+    const { account } = await svc.upsertIdentity(ext());
+    const first = await svc.saveSource(account.id, { title: 'x', origin: 'paste', text: 'aaaa', consentClass: 'standard', piiPresent: false });
+    // Replace with the SAME size — must not trip the cap (delta == 0).
+    const second = await svc.saveSource(account.id, { id: first.id, title: 'x', origin: 'paste', text: 'bbbb', consentClass: 'standard', piiPresent: false });
+    expect(second.id).toBe(first.id);
+    expect((await svc.listSources(account.id))).toHaveLength(1);
+    expect((await svc.sourceQuotaStatus(account.id)).used_bytes).toBe(4);
+  });
+
+  it('deleting a stored source frees its bytes', async () => {
+    const svc = makeService();
+    const { account } = await svc.upsertIdentity(ext());
+    const s = await svc.saveSource(account.id, { title: 'x', origin: 'file', text: 'some text', consentClass: 'standard', piiPresent: false });
+    expect(await svc.deleteSource(account.id, s.id)).toBe(true);
+    expect((await svc.sourceQuotaStatus(account.id)).used_bytes).toBe(0);
+  });
+
+  it('stored sources are account-scoped (no cross-account read/delete)', async () => {
+    const svc = makeService();
+    const a = (await svc.upsertIdentity(ext({ subject: 'a' }))).account;
+    const b = (await svc.upsertIdentity(ext({ subject: 'b' }))).account;
+    const s = await svc.saveSource(a.id, { title: 'A only', origin: 'file', text: 'secret', consentClass: 'standard', piiPresent: false });
+    expect(await svc.getSource(b.id, s.id)).toBeNull();
+    expect(await svc.listSources(b.id)).toHaveLength(0);
+    expect(await svc.deleteSource(b.id, s.id)).toBe(false);
+    expect((await svc.getSource(a.id, s.id))?.title).toBe('A only');
   });
 });

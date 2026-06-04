@@ -79,9 +79,14 @@
     transcript: new Map(), // segment_id -> latest line {rev, is_final, who, text}
     explanations: new Map(), // segment_id -> {state:'loading'|'done', ex?}
     followups: [], // ordered Q→A thread: {ask_id, segment_id, question, state, answer?, error?}
-    userSources: [], // F2 BYO context: {id, title?, url?, text} — the canonical list
+    // S0: the canonical source library lives in window.AizenSources. These two are
+    // CLIENT-side view state only:
+    userSources: [], // legacy paste-only fallback used iff sources.js failed to load
+    fileEntries: [], // F3 per-file UI rows: {id, name, size, status, error?, docId?}
+    obsidian: { status: 'idle', vaultName: '', notes: 0, chunks: 0, error: '', busy: false }, // F4
   };
-  let userSourceSeq = 0; // monotonic counter → unique id per added user source
+  let userSourceSeq = 0; // monotonic counter → unique id per added user source (legacy)
+  let fileEntrySeq = 0; // monotonic counter → unique id per added file row
   let mode = 'demo';
   let currentSessionId = null; // the live session id (from the server status frame)
   let wsProviderStatus = null; // {stt,llm,search,auth} from the WS status frame
@@ -130,38 +135,500 @@
     requested.add(id);
     model.explanations.set(id, { state: 'loading' });
     if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'explain', segment_id: id, text, user_sources: userSourcesForSend() }));
+      // The "current query" for retrieval (S0) is the sentence being explained.
+      ws.send(JSON.stringify({ type: 'explain', segment_id: id, text, user_sources: userSourcesForSend(text) }));
     }
   }
 
-  // ---- F2: BYO user sources (give the AI more to work with) ----------------
-  // `model.userSources` is the canonical list; we ship the active set WITH every
-  // explain/ask request (mirroring the follow-up context), so it survives a WS
-  // reconnect without any server-side session state. Bound the payload client-side
-  // too (server re-bounds it).
-  function userSourcesForSend() {
+  // ---- S0 / F2–F4: BYO source library + top-k retrieval --------------------
+  // The canonical library lives in window.AizenSources (sources.js, loaded first):
+  // it owns pasted notes (F2), local files (F3), and Obsidian notes (F4), chunks
+  // them, and selects only the chunks relevant to the CURRENT query per request
+  // (S0). client.js is a thin producer/consumer over it. If sources.js somehow
+  // failed to load, we fall back to a paste-only array so the app never breaks.
+  function srcLib() {
+    return typeof window !== 'undefined' && window.AizenSources ? window.AizenSources : null;
+  }
+
+  // The active set shipped WITH every explain/ask request — only the chunks the S0
+  // retriever picks for `queryText` (the sentence being explained, or the typed
+  // question). It rides each request (mirroring the follow-up context) so BYO
+  // grounding survives a WS reconnect with no server-side session state. With no
+  // library/query it returns the most-recent sources, so the pre-S0 behaviour (ship
+  // the pasted notes) is byte-for-byte intact. Bounded again server-side.
+  function userSourcesForSend(queryText) {
+    const lib = srcLib();
+    if (lib) {
+      try {
+        return lib.selectFor(queryText || '', { maxChunks: 8, maxCharsPerChunk: 600 });
+      } catch {
+        return [];
+      }
+    }
+    // Legacy fallback (sources.js absent): ship pasted notes as before.
     return model.userSources.slice(0, 20).map((u) => {
-      const o = { id: u.id, text: (u.text || '').slice(0, 4096) };
+      const o = { id: u.id, text: (u.text || '').slice(0, 4096), origin: 'paste' };
       if (u.title) o.title = u.title.slice(0, 200);
       if (u.url) o.url = u.url.slice(0, 2048);
       return o;
     });
   }
 
+  // A pasted note → a doc with origin:'paste' in the library (or the legacy array).
   function addUserSource(src) {
-    const text = (src && src.text ? String(src.text) : '').trim();
+    const text = src && src.text ? String(src.text).trim() : '';
     if (!text) return;
-    userSourceSeq += 1;
-    const entry = { id: 'us_' + userSourceSeq, text };
-    if (src.title) entry.title = String(src.title).trim();
-    if (src.url) entry.url = String(src.url).trim();
-    model.userSources.push(entry);
+    const title = src.title ? String(src.title).trim() : '';
+    const url = src.url ? String(src.url).trim() : '';
+    const lib = srcLib();
+    if (lib) {
+      lib.addDoc({ origin: 'paste', text, title: title || undefined, url: url || undefined });
+    } else {
+      userSourceSeq += 1;
+      const entry = { id: 'us_' + userSourceSeq, text };
+      if (title) entry.title = title;
+      if (url) entry.url = url;
+      model.userSources.push(entry);
+    }
     refreshFocusData(); // re-render an open Sources popup so the new row shows
   }
 
   function removeUserSource(id) {
-    model.userSources = model.userSources.filter((u) => u.id !== id);
+    deleteStoredSource(id); // F3 Phase B — also drop the account-stored copy (frees quota)
+    const lib = srcLib();
+    if (lib) lib.removeDoc(id);
+    else model.userSources = model.userSources.filter((u) => u.id !== id);
     refreshFocusData();
+  }
+
+  // The pasted-note docs to render in "Your sources" (origin:'paste' only; files and
+  // Obsidian notes get their own sections below).
+  function pasteSources() {
+    const lib = srcLib();
+    return lib ? lib.listDocs('paste') : model.userSources;
+  }
+
+  // ---- F3: local files as sources (Phase A — BYO, client-side extraction) --
+  // A picked/dropped file → extracted text → an origin:'file' doc in the S0 library.
+  // A big file doesn't blow the prompt budget because retrieval (S0) selects only
+  // the relevant chunks per query. Files live ONLY in the browser this session (same
+  // privacy posture as a pasted note, F3 §9); Phase B adds opt-in persistence.
+
+  // Native-text extensions we read directly (F3 §3). Anything else that isn't a PDF
+  // gets a clear per-file "unsupported" error and is skipped (never blocks others).
+  const TEXT_EXTS = [
+    'md', 'markdown', 'txt', 'text', 'csv', 'tsv', 'json', 'jsonl', 'ndjson', 'log',
+    'yaml', 'yml', 'xml', 'html', 'htm', 'rtf', 'tex', 'rst', 'org',
+    // common code files (read as text)
+    'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'py', 'rb', 'go', 'rs', 'java', 'kt', 'c',
+    'h', 'cpp', 'hpp', 'cc', 'cs', 'php', 'swift', 'sh', 'bash', 'zsh', 'sql', 'css',
+    'scss', 'less', 'toml', 'ini', 'cfg', 'conf', 'env', 'gradle', 'r', 'jl', 'lua',
+    'pl', 'vue', 'svelte', 'astro',
+  ];
+  const MAX_FILE_BYTES = 12 * 1024 * 1024; // refuse to read a file larger than this
+
+  function fileExt(name) {
+    const m = /\.([a-z0-9]+)$/i.exec(String(name || ''));
+    return m ? m[1].toLowerCase() : '';
+  }
+
+  function isPdf(file) {
+    return fileExt(file.name) === 'pdf' || file.type === 'application/pdf';
+  }
+
+  // Extract a file's text by type. Resolves to the text, or rejects with a short
+  // reason ('unsupported' | 'empty' | 'too-large' | a parser message).
+  function extractFileText(file) {
+    if (file.size != null && file.size > MAX_FILE_BYTES) {
+      return Promise.reject(new Error('too-large'));
+    }
+    const ext = fileExt(file.name);
+    const textual = TEXT_EXTS.indexOf(ext) !== -1 || (file.type && file.type.indexOf('text/') === 0);
+    if (textual) {
+      return file.text().then((t) => (t && t.trim() ? t : Promise.reject(new Error('empty'))));
+    }
+    if (isPdf(file)) return extractPdfText(file);
+    return Promise.reject(new Error('unsupported'));
+  }
+
+  // PDF extraction via a VENDORED pdf.js (F3 §3 / §13 default: vendored, offline-safe,
+  // no external CDN). Loaded lazily from /vendor/pdf.mjs only when a PDF is added; if
+  // it isn't present, we surface a clear, skippable error rather than failing the lot.
+  let pdfLibPromise = null;
+  function loadPdfLib() {
+    if (pdfLibPromise) return pdfLibPromise;
+    pdfLibPromise = import('/vendor/pdf.mjs')
+      .then((mod) => {
+        const lib = mod && (mod.getDocument ? mod : mod.default);
+        if (!lib || !lib.getDocument) throw new Error('pdf-lib-missing');
+        if (lib.GlobalWorkerOptions) lib.GlobalWorkerOptions.workerSrc = '/vendor/pdf.worker.mjs';
+        return lib;
+      })
+      .catch(() => {
+        pdfLibPromise = null; // allow a retry once the vendor file is dropped in
+        throw new Error('pdf-unavailable');
+      });
+    return pdfLibPromise;
+  }
+
+  function extractPdfText(file) {
+    return loadPdfLib()
+      .then((lib) => file.arrayBuffer().then((buf) => lib.getDocument({ data: buf }).promise))
+      .then((pdf) => {
+        const pages = [];
+        let chain = Promise.resolve();
+        for (let i = 1; i <= pdf.numPages; i++) {
+          chain = chain
+            .then(() => pdf.getPage(i))
+            .then((page) => page.getTextContent())
+            .then((tc) => pages.push((tc.items || []).map((it) => it.str || '').join(' ')));
+        }
+        return chain.then(() => {
+          const text = pages.join('\n\n').trim();
+          if (!text) throw new Error('empty');
+          return text;
+        });
+      });
+  }
+
+  function fileErrorMessage(err) {
+    const m = err && err.message ? err.message : String(err);
+    if (m === 'unsupported') return 'Unsupported file type — try .md, .txt, .csv, .json, code, or PDF.';
+    if (m === 'too-large') return 'File is too large to add.';
+    if (m === 'empty') return 'No readable text found.';
+    if (m === 'pdf-unavailable') return 'PDF support needs the vendored pdf.js (see public/vendor/README).';
+    return 'Could not read this file: ' + m;
+  }
+
+  // Add a list of File objects: one UI row each (parsing → ✓/error); each extracted
+  // file becomes an origin:'file' doc. One failure never blocks the others (F3 §8).
+  function addFiles(fileList) {
+    const files = fileList ? Array.prototype.slice.call(fileList) : [];
+    files.forEach((file) => {
+      fileEntrySeq += 1;
+      const entry = {
+        id: 'fe_' + fileEntrySeq,
+        name: file.name || 'file',
+        size: file.size || 0,
+        status: 'parsing',
+      };
+      model.fileEntries.push(entry);
+      refreshFocusData();
+      extractFileText(file)
+        .then((text) => {
+          const lib = srcLib();
+          const doc = lib ? lib.addDoc({ origin: 'file', title: entry.name, text }) : null;
+          entry.status = 'done';
+          entry.docId = doc ? doc.id : null;
+          entry.chunks = doc ? doc.chunks : 0;
+          refreshFocusData();
+        })
+        .catch((err) => {
+          entry.status = 'error';
+          entry.error = fileErrorMessage(err);
+          refreshFocusData();
+        });
+    });
+  }
+
+  function removeFileEntry(entry) {
+    if (entry.docId) {
+      deleteStoredSource(entry.docId); // F3 Phase B — drop the account-stored copy too
+      const lib = srcLib();
+      if (lib) lib.removeDoc(entry.docId);
+    }
+    model.fileEntries = model.fileEntries.filter((e) => e.id !== entry.id);
+    refreshFocusData();
+  }
+
+  // ---- F4: connect your Obsidian vault (Phase 1 — picker / upload) ---------
+  // A vault is a folder of markdown notes → a higher-volume producer for the S0
+  // library (origin:'obsidian', title = vault-relative note path). Zero-install on
+  // Chromium (showDirectoryPicker); a folder-upload fallback elsewhere. Read-only,
+  // client-side, in-memory (F4 §7). Re-sync re-reads the folder; Disconnect clears.
+  const MAX_OBSIDIAN_NOTES = 4000; // bound a pathological vault (S0 still caps the prompt)
+  let obsidianProvider = null;
+  let restoredObsidianHandle = null; // a persisted FS-Access handle awaiting a re-grant click
+
+  function obsLib() {
+    return typeof window !== 'undefined' && window.AizenObsidian ? window.AizenObsidian : null;
+  }
+  function setObsidian(patch) {
+    Object.assign(model.obsidian, patch);
+    refreshFocusData();
+  }
+
+  // Index a connected provider's notes into the library (origin:'obsidian'). Used by
+  // first connect and by Re-sync (which clears the vault's docs first). Resolves to
+  // the final {notes, chunks} counts from the library.
+  function indexObsidian(provider) {
+    return provider.listNotes().then((notes) => {
+      const capped = notes.slice(0, MAX_OBSIDIAN_NOTES);
+      const obs = obsLib();
+      const lib = srcLib();
+      let read = 0;
+      let chain = Promise.resolve();
+      capped.forEach((n) => {
+        chain = chain
+          .then(() => provider.readNote(n.path))
+          .then((raw) => {
+            const text = obs ? obs.parseMarkdown(raw) : String(raw || '');
+            if (text && lib) lib.addDoc({ origin: 'obsidian', title: n.path, path: n.path, text });
+            read += 1;
+            if (read % 50 === 0) setObsidian({ notes: read }); // coarse progress for big vaults
+          })
+          .catch(() => {
+            /* skip an unreadable note, keep indexing the rest */
+          });
+      });
+      return chain.then(() => {
+        const after = lib ? lib.stats('obsidian') : { docs: read, chunks: 0 };
+        return { notes: after.docs, chunks: after.chunks };
+      });
+    });
+  }
+
+  function connectObsidian(opts) {
+    const obs = obsLib();
+    if (!obs) {
+      setObsidian({ status: 'error', error: 'Obsidian support failed to load.' });
+      return;
+    }
+    if (model.obsidian.busy) return;
+    setObsidian({ status: 'connecting', error: '', busy: true });
+    let provider;
+    try {
+      provider = obs.makeProvider(opts || {});
+    } catch (e) {
+      setObsidian({ status: 'error', busy: false, error: 'Could not start the Obsidian connect.' });
+      return;
+    }
+    provider
+      .connect()
+      .then((info) => {
+        obsidianProvider = provider;
+        setObsidian({ vaultName: (info && info.vaultName) || 'vault' });
+        // Persist the FS-Access handle for one-click reconnect next visit (F4 §3).
+        if (provider.handle && obs.persist) {
+          const h = provider.handle();
+          if (h) obs.persist.saveHandle(h);
+        }
+        return indexObsidian(provider);
+      })
+      .then((res) => setObsidian({ status: 'connected', notes: res.notes, chunks: res.chunks, busy: false }))
+      .catch((err) => {
+        const msg = err && err.message ? err.message : String(err);
+        setObsidian({
+          status: model.obsidian.vaultName ? 'connected' : 'idle',
+          busy: false,
+          error:
+            msg === 'permission-denied'
+              ? 'Permission to read the vault was denied.'
+              : msg === 'unsupported'
+                ? 'This browser can’t pick a folder — use the upload fallback below.'
+                : msg === 'no-directory-handle'
+                  ? 'No folder was chosen.'
+                  : 'Could not connect the vault.',
+        });
+      });
+  }
+
+  function resyncObsidian() {
+    if (!obsidianProvider || model.obsidian.busy) return;
+    const lib = srcLib();
+    if (lib) lib.removeByOrigin('obsidian'); // re-read replaces the vault's docs
+    setObsidian({ status: 'connecting', busy: true, notes: 0, chunks: 0, error: '' });
+    indexObsidian(obsidianProvider)
+      .then((res) => setObsidian({ status: 'connected', notes: res.notes, chunks: res.chunks, busy: false }))
+      .catch(() => setObsidian({ status: 'connected', busy: false, error: 'Re-sync failed.' }));
+  }
+
+  function disconnectObsidian() {
+    const lib = srcLib();
+    if (lib) lib.removeByOrigin('obsidian');
+    obsidianProvider = null;
+    const obs = obsLib();
+    if (obs && obs.persist) obs.persist.clearHandle();
+    setObsidian({ status: 'idle', vaultName: '', notes: 0, chunks: 0, error: '', busy: false });
+  }
+
+  // Attempt a one-click reconnect from a persisted FS-Access handle on boot (F4 §3).
+  // Silent on failure (no handle / permission not yet re-granted) — the user can
+  // always click Connect. The actual permission re-grant happens on that click.
+  function tryRestoreObsidian() {
+    const obs = obsLib();
+    if (!obs || !obs.persist || !obs.supportsDirectoryPicker || !obs.supportsDirectoryPicker()) return;
+    obs.persist
+      .loadHandle()
+      .then((handle) => {
+        if (handle) {
+          restoredObsidianHandle = handle;
+          model.obsidian.restorable = true; // surfaced as a "Reconnect" affordance
+          refreshFocusData();
+        }
+      })
+      .catch(() => {
+        /* no persisted handle — nothing to restore */
+      });
+  }
+
+  // Reconnect from the persisted handle (re-requests read permission on this click).
+  function reconnectObsidian() {
+    if (!restoredObsidianHandle) return;
+    connectObsidian({ handle: restoredObsidianHandle });
+  }
+
+  // ---- F3 Phase B: persist sources to the signed-in account ----------------
+  // Signed-in users can SAVE a source (a pasted note or a parsed file) so it reloads
+  // into the S0 library on the next visit — account-scoped + byte-quota-gated
+  // fail-closed (a 409 shows the same typed quota body the saved-sessions UI uses).
+  // Only the EXTRACTED TEXT is stored (F3 §8). All guarded: anonymous users never see
+  // any of this; with no `fetch` it stays inert.
+  const savedDocIds = Object.create(null); // libDocId -> server stored-source id
+  let sourceQuota = null; // {tier, used_bytes, limit_bytes, count, exceeded}
+  let storedSourcesLoaded = false;
+
+  function canPersistSources() {
+    return !!account && typeof fetch === 'function';
+  }
+
+  // Load the account's stored sources back into the library on boot (F3 §8). The
+  // list carries metadata only; each source's text is fetched by id and re-ingested.
+  function bootStoredSources() {
+    if (!canPersistSources() || storedSourcesLoaded) return;
+    storedSourcesLoaded = true;
+    fetch('/api/sources', { headers: { accept: 'application/json' } })
+      .then((r) => (r && r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data || !data.sources) return;
+        sourceQuota = data.quota || null;
+        data.sources.slice(0, 100).forEach((meta) => loadStoredSource(meta));
+        refreshFocusData();
+      })
+      .catch(() => {
+        storedSourcesLoaded = false; // allow a retry on the next boot
+      });
+  }
+
+  function loadStoredSource(meta) {
+    fetch('/api/sources/' + encodeURIComponent(meta.id), { headers: { accept: 'application/json' } })
+      .then((r) => (r && r.ok ? r.json() : null))
+      .then((data) => {
+        const lib = srcLib();
+        if (!data || !data.source || !lib) return;
+        const s = data.source;
+        const doc = lib.addDoc({ origin: s.origin, title: s.title, text: s.text });
+        if (!doc) return;
+        savedDocIds[doc.id] = s.id;
+        // Surface a file/obsidian-origin source as a file row so it's visible/removable.
+        if (s.origin === 'file') {
+          fileEntrySeq += 1;
+          model.fileEntries.push({
+            id: 'fe_' + fileEntrySeq,
+            name: s.title,
+            size: s.bytes,
+            status: 'done',
+            docId: doc.id,
+            chunks: doc.chunks,
+          });
+        }
+        refreshFocusData();
+      })
+      .catch(() => {
+        /* one source failing to reload never blocks the others */
+      });
+  }
+
+  // Persist a library doc to the account; `onResult({ok, message?})` reports back so
+  // the row can show an inline "Saved" / quota-exceeded message.
+  function saveSourceToAccount(doc, onResult) {
+    if (!doc || !canPersistSources()) return;
+    fetch('/api/sources', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: doc.title || doc.origin + ' source', origin: doc.origin, text: doc.text }),
+    })
+      .then((r) => r.json().then((body) => ({ status: r.status, body })))
+      .then(({ status, body }) => {
+        if (status === 201 && body.saved) {
+          savedDocIds[doc.id] = body.saved.id;
+          sourceQuota = body.quota || sourceQuota;
+          if (onResult) onResult({ ok: true });
+          refreshFocusData();
+        } else if (status === 409) {
+          if (onResult)
+            onResult({
+              ok: false,
+              message: (body && body.message ? body.message + ' ' : '') + (body && body.remedy ? body.remedy : ''),
+            });
+        } else if (onResult) {
+          onResult({ ok: false, message: (body && (body.message || body.error)) || 'Could not save.' });
+        }
+      })
+      .catch(() => {
+        if (onResult) onResult({ ok: false, message: 'Could not save — please try again.' });
+      });
+  }
+
+  // Delete the account-stored copy of a library doc (frees byte quota). Returns a
+  // promise so a remove can await it. No-op when the doc was never saved.
+  function deleteStoredSource(docId) {
+    const storedId = savedDocIds[docId];
+    if (!storedId || !canPersistSources()) return Promise.resolve();
+    return fetch('/api/sources/' + encodeURIComponent(storedId), { method: 'DELETE' })
+      .then((r) => (r && r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && data.quota) sourceQuota = data.quota;
+        delete savedDocIds[docId];
+      })
+      .catch(() => {
+        /* leave it; the user can retry */
+      });
+  }
+
+  // Append a "Save to account" button (or a "Saved" badge) to a source row's main
+  // column, when signed in. The button persists the doc and swaps to the badge.
+  function appendSaveControls(main, doc) {
+    if (!canPersistSources() || !doc) return;
+    if (savedDocIds[doc.id]) {
+      main.appendChild(mk('span', 'src-saved-badge', '✓ Saved'));
+      return;
+    }
+    const row = mk('div', 'src-save-row');
+    const btn = mk('button', 'btn btn-secondary src-save-btn', 'Save to account');
+    btn.type = 'button';
+    const msg = mk('span', 'src-save-msg');
+    btn.addEventListener('click', () => {
+      btn.disabled = true;
+      msg.textContent = 'Saving…';
+      msg.className = 'src-save-msg muted';
+      saveSourceToAccount(doc, (res) => {
+        if (res.ok) {
+          // re-render replaces the button with the Saved badge
+          refreshFocusData();
+        } else {
+          btn.disabled = false;
+          msg.textContent = res.message || 'Could not save.';
+          msg.className = 'src-save-msg usrc-file-error';
+        }
+      });
+    });
+    row.appendChild(btn);
+    row.appendChild(msg);
+    main.appendChild(row);
+  }
+
+  // The byte-quota line shown atop the files section when signed in ("X of N used").
+  function storageLine() {
+    if (!sourceQuota) return null;
+    const used = formatBytes(sourceQuota.used_bytes || 0) || '0 B';
+    const limit =
+      sourceQuota.limit_bytes === null || sourceQuota.limit_bytes === undefined
+        ? '∞'
+        : formatBytes(sourceQuota.limit_bytes);
+    const p = mk('p', 'src-storage', 'Saved to account: ' + used + ' of ' + limit);
+    if (sourceQuota.exceeded) p.classList.add('usrc-file-error');
+    return p;
   }
 
   // ---- rendering -----------------------------------------------------------
@@ -251,21 +718,48 @@
     if (t && text) t.textContent = text;
   }
 
-  // Shared source-link row (reused by inline answers, the side panel, and the F1
-  // follow-up thread) so web citations always render identically (INV-1/2).
+  // Shared source row (reused by inline answers, the side panel, and the F1
+  // follow-up thread). Web citations render as links (INV-1/2); the asker's OWN
+  // grounding — Obsidian notes / local files / pasted notes (no url) — renders as a
+  // labeled chip so it's clear an answer was grounded in their connected sources.
+  // Owned chips are ALWAYS shown (not subject to the web `limit`) so a vault-grounded
+  // answer never hides the fact it used the vault.
   function buildSourceRow(sources, className, limit) {
     const src = document.createElement('div');
     src.className = className;
-    (sources || []).slice(0, limit || 3).forEach((s) => {
-      const a = document.createElement('a');
-      a.href = s.url;
-      a.target = '_blank';
-      a.rel = 'noopener';
-      a.textContent = s.title || s.url;
-      src.appendChild(a);
-      src.appendChild(document.createTextNode(' '));
-    });
+    const list = sources || [];
+    list
+      .filter((s) => s && s.url)
+      .slice(0, limit || 3)
+      .forEach((s) => {
+        const a = document.createElement('a');
+        a.href = s.url;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = s.title || s.url;
+        src.appendChild(a);
+        src.appendChild(document.createTextNode(' '));
+      });
+    list
+      .filter((s) => s && !s.url) // user / file / obsidian
+      .slice(0, 4)
+      .forEach((s) => {
+        src.appendChild(sourceChip(s));
+        src.appendChild(document.createTextNode(' '));
+      });
     return src;
+  }
+
+  // A non-link citation for the asker's own source, icon'd by provenance.
+  function sourceChip(s) {
+    const span = document.createElement('span');
+    const type = s.type || 'user';
+    span.className = 'src-chip src-chip-' + type;
+    const icon = type === 'obsidian' ? '🔮 ' : type === 'file' ? '📄 ' : '📝 ';
+    const fallback = type === 'obsidian' ? 'vault note' : type === 'file' ? 'file' : 'your note';
+    span.textContent = icon + (s.title || fallback);
+    if (s.snippet) span.title = s.snippet; // hover shows the grounding excerpt
+    return span;
   }
 
   // The compact answer shown directly beneath a finalized question line.
@@ -549,7 +1043,8 @@
           ask_id: askId,
           sentence: ctx.sentence,
           transcript: ctx.transcript,
-          user_sources: userSourcesForSend(),
+          // The "current query" for retrieval (S0) is the typed follow-up question.
+          user_sources: userSourcesForSend(question),
         }),
       );
       // Final safety net: if no answer/error frame ever comes back (a wedged
@@ -1306,6 +1801,8 @@
           renderAccount(data);
           // Keep an open Settings/Providers popup fresh after re-fetch (e.g. sign in/out).
           if (openModalKind) renderOpenModal();
+          // F3 Phase B: reload the account's stored sources into the library (once).
+          bootStoredSources();
         }
       })
       .catch(() => {
@@ -1373,6 +1870,7 @@
 
   function signOut() {
     if (typeof fetch !== 'function') return;
+    storedSourcesLoaded = false; // a future sign-in reloads that account's stored sources
     fetch('/auth/logout', { method: 'POST' })
       .then(() => {
         show(els.acctPanel, false);
@@ -1653,7 +2151,8 @@
   // a removable row per source the user has provided. Re-rendered on add/remove.
   function buildUserSourcesSection() {
     const wrap = mk('div', 'usrc-section');
-    const count = model.userSources.length;
+    const pasted = pasteSources();
+    const count = pasted.length;
     wrap.appendChild(
       mk('p', 'modal-section-label', 'Your sources' + (count ? ' (' + count + ')' : '')),
     );
@@ -1688,7 +2187,7 @@
 
     if (count) {
       const ulist = mk('div', 'usrc-list');
-      model.userSources.forEach((u) => {
+      pasted.forEach((u) => {
         const row = mk('div', 'usrc-item');
         const main = mk('div', 'usrc-main');
         if (u.title) main.appendChild(mk('div', 'usrc-title', u.title));
@@ -1702,6 +2201,7 @@
           main.appendChild(a);
         }
         main.appendChild(mk('p', 'usrc-text', u.text));
+        appendSaveControls(main, u); // F3 Phase B — Save to account / Saved badge
         row.appendChild(main);
         const rm = mk('button', 'usrc-remove', '✕');
         rm.type = 'button';
@@ -1715,11 +2215,217 @@
     return wrap;
   }
 
+  // F3 — "Local files": a file picker + drop zone, then a row per added file
+  // (name, size, parsing→✓/error, remove ✕). Built fresh on each Sources render.
+  function buildFilesSection() {
+    const wrap = mk('div', 'usrc-section');
+    const entries = model.fileEntries;
+    wrap.appendChild(
+      mk('p', 'modal-section-label', 'Local files' + (entries.length ? ' (' + entries.length + ')' : '')),
+    );
+    wrap.appendChild(
+      mk('p', 'sources-hint',
+        'Add your own files (.md, .txt, .csv, .json, code, or PDF). The AI grounds answers in the ' +
+        'parts relevant to each question — files stay in your browser.'),
+    );
+    const storage = storageLine(); // F3 Phase B — byte-quota meter when signed in
+    if (storage) wrap.appendChild(storage);
+
+    const drop = mk('div', 'usrc-drop');
+    drop.appendChild(mk('span', 'usrc-drop-text', 'Drag files here, or'));
+    const pick = mk('button', 'btn btn-secondary usrc-file-btn', 'Choose files');
+    pick.type = 'button';
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.className = 'usrc-file-input';
+    input.style.display = 'none';
+    input.addEventListener('change', () => {
+      addFiles(input.files);
+      input.value = ''; // allow re-adding the same file later
+    });
+    pick.addEventListener('click', () => input.click());
+    drop.appendChild(pick);
+    drop.appendChild(input);
+    // Drag-and-drop (guarded; the headless harness has no DataTransfer).
+    drop.addEventListener('dragover', (e) => {
+      if (e && e.preventDefault) e.preventDefault();
+      drop.classList.add('drag');
+    });
+    drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
+    drop.addEventListener('drop', (e) => {
+      if (e && e.preventDefault) e.preventDefault();
+      drop.classList.remove('drag');
+      const dt = e && e.dataTransfer;
+      if (dt && dt.files) addFiles(dt.files);
+    });
+    wrap.appendChild(drop);
+
+    if (entries.length) {
+      const list = mk('div', 'usrc-list');
+      entries.forEach((entry) => list.appendChild(fileRow(entry)));
+      wrap.appendChild(list);
+    }
+    return wrap;
+  }
+
+  function fileRow(entry) {
+    const row = mk('div', 'usrc-item usrc-file-item');
+    const main = mk('div', 'usrc-main');
+    const head = mk('div', 'usrc-file-head');
+    head.appendChild(mk('span', 'usrc-title', entry.name));
+    if (entry.size) head.appendChild(mk('span', 'usrc-file-size', formatBytes(entry.size)));
+    main.appendChild(head);
+    const status = mk('div', 'usrc-file-status');
+    if (entry.status === 'parsing') {
+      status.classList.add('muted');
+      status.textContent = 'Parsing…';
+    } else if (entry.status === 'error') {
+      status.classList.add('usrc-file-error');
+      status.textContent = entry.error || 'Could not read this file.';
+    } else {
+      status.classList.add('usrc-file-ok');
+      status.textContent =
+        '✓ Added' + (entry.chunks ? ' · ' + entry.chunks + (entry.chunks === 1 ? ' chunk' : ' chunks') : '');
+    }
+    main.appendChild(status);
+    // F3 Phase B — once parsed, offer Save to account / show the Saved badge.
+    if (entry.status === 'done' && entry.docId) {
+      const lib = srcLib();
+      const doc = lib ? lib.getDoc(entry.docId) : null;
+      if (doc) appendSaveControls(main, doc);
+    }
+    row.appendChild(main);
+    const rm = mk('button', 'usrc-remove', '✕');
+    rm.type = 'button';
+    rm.title = 'Remove file';
+    rm.addEventListener('click', () => removeFileEntry(entry));
+    row.appendChild(rm);
+    return row;
+  }
+
+  function formatBytes(n) {
+    if (!n) return '';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return Math.round(n / 1024) + ' KB';
+    return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  // F4 — "Obsidian vault": a Connect card with a small state machine
+  // (idle → connecting → connected) plus Re-sync / Disconnect, and a folder-upload
+  // fallback for browsers without the File System Access API.
+  function buildObsidianSection() {
+    const wrap = mk('div', 'usrc-section obs-section');
+    wrap.appendChild(mk('p', 'modal-section-label', 'Obsidian vault'));
+    const o = model.obsidian;
+    const obs = obsLib();
+    // If obsidian.js never loaded (window.AizenObsidian is undefined), no provider
+    // can be built — say so plainly instead of the misleading "can't pick a folder".
+    if (!obs) {
+      const card = mk('div', 'obs-card');
+      card.appendChild(
+        mk('p', 'usrc-file-error',
+          'Obsidian support didn’t load (/obsidian.js). Hard-refresh the page (Ctrl/Cmd+Shift+R); ' +
+          'if it persists, your server is out of date — restart it (stop it and run “pnpm start” again).'),
+      );
+      wrap.appendChild(card);
+      return wrap;
+    }
+    const canPick = !!(obs.supportsDirectoryPicker && obs.supportsDirectoryPicker());
+    const card = mk('div', 'obs-card');
+
+    if (o.status === 'connected') {
+      card.appendChild(
+        mk('div', 'obs-state obs-connected',
+          'Connected · ' + (o.vaultName || 'vault') + ' · ' + o.notes + (o.notes === 1 ? ' note' : ' notes') +
+          (o.chunks ? ' · ' + o.chunks + (o.chunks === 1 ? ' chunk' : ' chunks') : '')),
+      );
+      const actions = mk('div', 'obs-actions');
+      const resync = mk('button', 'btn btn-secondary', o.busy ? 'Re-syncing…' : 'Re-sync');
+      resync.type = 'button';
+      resync.disabled = !!o.busy;
+      resync.addEventListener('click', resyncObsidian);
+      const disc = mk('button', 'btn btn-secondary', 'Disconnect');
+      disc.type = 'button';
+      disc.addEventListener('click', disconnectObsidian);
+      actions.appendChild(resync);
+      actions.appendChild(disc);
+      card.appendChild(actions);
+    } else if (o.status === 'connecting') {
+      card.appendChild(mk('div', 'obs-state', 'Connecting…' + (o.notes ? ' (' + o.notes + ' notes read)' : '')));
+    } else {
+      card.appendChild(
+        mk('p', 'sources-hint',
+          'Connect your local Obsidian vault so its notes ground answers. Read-only — Aizen never ' +
+          'writes to your vault, and notes stay in your browser.'),
+      );
+      const hasPicker = canPick || (o.restorable && restoredObsidianHandle);
+      if (!hasPicker) {
+        // No File System Access API → the folder-upload is the only path; say why.
+        card.appendChild(
+          mk('p', 'obs-why', 'This browser can’t pick a folder directly — use “Upload vault folder” below.'),
+        );
+      }
+      // Both connection options are real, MATCHED `.btn` pills in one row. The folder
+      // upload is a hidden <input webkitdirectory> fired by a styled button (so it
+      // matches the picker button instead of rendering as a raw "No file chosen" field).
+      const actions = mk('div', 'obs-actions');
+
+      const up = document.createElement('input');
+      up.type = 'file';
+      up.className = 'obs-upload';
+      up.setAttribute('webkitdirectory', '');
+      up.setAttribute('directory', '');
+      up.multiple = true;
+      up.style.display = 'none';
+      up.addEventListener('change', () => {
+        if (up.files && up.files.length) connectObsidian({ files: up.files });
+      });
+
+      // Primary action: reconnect a persisted handle, else the directory picker.
+      if (o.restorable && restoredObsidianHandle) {
+        const re = mk('button', 'btn btn-primary', 'Reconnect Obsidian vault');
+        re.type = 'button';
+        re.addEventListener('click', reconnectObsidian);
+        actions.appendChild(re);
+      } else if (canPick) {
+        const btn = mk('button', 'btn btn-primary', 'Connect Obsidian vault');
+        btn.type = 'button';
+        btn.addEventListener('click', () => connectObsidian({}));
+        actions.appendChild(btn);
+      }
+      // Folder-upload button — secondary alongside a picker, else the primary CTA.
+      const upBtn = mk('button', 'btn ' + (hasPicker ? 'btn-secondary' : 'btn-primary') + ' obs-upload-btn', 'Upload vault folder');
+      upBtn.type = 'button';
+      upBtn.addEventListener('click', () => up.click());
+      actions.appendChild(upBtn);
+      actions.appendChild(up);
+      card.appendChild(actions);
+    }
+    if (o.error) card.appendChild(mk('p', 'usrc-file-error obs-error', o.error));
+    wrap.appendChild(card);
+    return wrap;
+  }
+
   function buildSourcesBody() {
     const body = mk('div', 'modal-content');
 
-    // "Your sources" (user-provided context) sits above the cited-web list.
+    // If the S0 helper scripts didn't load (window.AizenSources/AizenObsidian
+    // undefined — usually a server started before these routes existed), retrieval +
+    // Obsidian are degraded. Surface one clear, actionable banner up top.
+    if (!srcLib() || !obsLib()) {
+      body.appendChild(
+        mk('p', 'usrc-file-error',
+          'Some source features didn’t load (/sources.js, /obsidian.js). Hard-refresh ' +
+          '(Ctrl/Cmd+Shift+R); if it persists, restart your server — stop it and run “pnpm start” again.'),
+      );
+    }
+
+    // "Your sources" (pasted context), then local files (F3), then Obsidian (F4) —
+    // all three pour into the one S0 library; the cited-web list sits below.
     body.appendChild(buildUserSourcesSection());
+    body.appendChild(buildFilesSection());
+    body.appendChild(buildObsidianSection());
 
     // "Cited sources" — the web pages grounded answers have cited this session.
     const sources = collectAllSources();
@@ -2021,4 +2727,5 @@
   });
 
   bootAccount();
+  tryRestoreObsidian(); // F4 — offer a one-click reconnect if a vault handle was persisted
 })();

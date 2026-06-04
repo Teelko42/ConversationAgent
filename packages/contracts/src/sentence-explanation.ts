@@ -24,18 +24,23 @@ export const WordBreakdownSchema = z.object({
 export type WordBreakdown = z.infer<typeof WordBreakdownSchema>;
 
 /**
- * A source backing a question's answer. Two kinds (New_Feature.md F2 §4):
- *   • `web`  — a retrieved web page. INV-1/2 still holds: a web source MUST carry
- *              a `url` so F03 can show provenance (enforced by the refine below).
- *   • `user` — context the user provided (a pasted note / a URL-with-comment). It
- *              may have no `url`, in which case the UI renders it without a link.
- * Reused by `FollowupAnswer`, so this one shape covers both engines.
+ * A source backing a question's answer. Kinds (New_Feature.md F2 §4 / F3 §4 / F4 §5):
+ *   • `web`      — a retrieved web page. INV-1/2 still holds: a web source MUST carry
+ *                  a `url` so F03 can show provenance (enforced by the refine below).
+ *   • `user`     — context the user provided (a pasted note / a URL-with-comment).
+ *   • `file`     — a local file the user added as a source (F3); `title` = filename.
+ *   • `obsidian` — a note from the user's connected Obsidian vault (F4); `title` =
+ *                  the vault-relative note path.
+ * `user`/`file`/`obsidian` may have no `url` (the UI then renders without a link);
+ * only `web` requires one. These three differ ONLY in provenance (icon/grouping),
+ * not in how they ground the answer. Reused by `FollowupAnswer`, so this one shape
+ * covers both engines.
  */
 export const ExplanationSourceSchema = z
   .object({
     citation_id: z.string(),
-    type: z.enum(['web', 'user']),
-    /** Required for `web` (INV-1/2); optional for `user` sources without a link. */
+    type: z.enum(['web', 'user', 'file', 'obsidian']),
+    /** Required for `web` (INV-1/2); optional for user/file/obsidian sources. */
     url: z.string().optional(),
     title: z.string().optional(),
     snippet: z.string().optional(),

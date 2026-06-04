@@ -32,7 +32,7 @@ export {
   entitlementFor,
   retentionDeadlineUs,
 } from './entitlements.js';
-export { QuotaExceededError, checkQuota } from './quota.js';
+export { QuotaExceededError, checkQuota, SourceQuotaExceededError, checkSourceQuota } from './quota.js';
 export {
   CookieSigner,
   parseCookies,
@@ -46,4 +46,5 @@ export {
   type AccountServiceOptions,
   type ArtifactInput,
   type SaveResourceInput,
+  type SaveSourceInput,
 } from './service.js';

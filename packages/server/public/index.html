@@ -363,6 +363,11 @@
       </div>
     </div>
 
+    <!-- S0 source library + retrieval (window.AizenSources) and the F4 Obsidian
+         connector seam (window.AizenObsidian) load BEFORE client.js, which rewires
+         its BYO-sources path through them. Plain ES — no build step. -->
+    <script src="/sources.js"></script>
+    <script src="/obsidian.js"></script>
     <script src="/client.js"></script>
   </body>
 </html>

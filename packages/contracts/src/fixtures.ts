@@ -7,7 +7,7 @@ import type { TranscriptSegment } from './transcript-segment.js';
 import type { ConsentContext } from './consent.js';
 import type { ConceptCard } from './concept-card.js';
 import type { KgDelta } from './kg.js';
-import type { Account, Identity, SavedSession } from './account.js';
+import type { Account, Identity, SavedSession, StoredSource } from './account.js';
 import type { ExplanationSource } from './sentence-explanation.js';
 import type { UserSource } from './user-source.js';
 
@@ -132,6 +132,24 @@ export function makeSavedSession(over: Partial<SavedSession> = {}): SavedSession
     expires_at_us: null,
     ...over,
   } as SavedSession;
+}
+
+export function makeStoredSource(over: Partial<StoredSource> = {}): StoredSource {
+  return {
+    id: 'src_01HW000000000000000000000',
+    account_id: ACCOUNT,
+    title: 'launch-brief.md',
+    origin: 'file',
+    mime: 'text/markdown',
+    bytes: 44,
+    text: 'We are discussing the Q4 product launch plan.',
+    consent_class: 'standard',
+    pii_present: false,
+    created_at_us: 1748706943000000,
+    updated_at_us: 1748706943000000,
+    expires_at_us: null,
+    ...over,
+  } as StoredSource;
 }
 
 export function makeExplanationSource(over: Partial<ExplanationSource> = {}): ExplanationSource {

@@ -26,6 +26,7 @@ import {
   InMemoryAccountRepository,
   PgAccountRepository,
   QuotaExceededError,
+  SourceQuotaExceededError,
   clearCookie,
   makeAuthProviders,
   openAccountDb,
@@ -35,7 +36,7 @@ import {
   type ArtifactInput,
   type AuthSeam,
 } from '@aizen/accounts';
-import type { Entitlement, StoredArtifact, Tier } from '@aizen/contracts';
+import type { Entitlement, StoredArtifact, StoredSource, Tier } from '@aizen/contracts';
 import { providerStatus, type AppConfig, type ProviderStatus } from './config.js';
 
 const SESSION_COOKIE = 'aizen_session';
@@ -43,6 +44,12 @@ const OAUTH_COOKIE = 'aizen_oauth';
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const OAUTH_TTL_MS = 10 * 60 * 1000; // 10 minutes (the sign-in round-trip)
 const MAX_BODY_BYTES = 1_000_000; // cap a save payload (artifacts) at ~1 MB
+// A stored-source POST carries the EXTRACTED TEXT of a file/note, which can be
+// larger than a session save; allow more headroom (the tier byte quota is the real
+// ceiling — F3 §7 "bump MAX_BODY_BYTES for this route").
+const MAX_SOURCE_BODY_BYTES = 6_000_000; // ~6 MB
+const MAX_STORED_SOURCE_TEXT = 4_000_000; // hard cap on one source's stored text
+const MAX_STORED_SOURCE_TITLE = 512;
 
 /** The artifact families a client may persist (mirrors `StoredArtifact.kind`). */
 const ARTIFACT_KINDS: ReadonlySet<StoredArtifact['kind']> = new Set([
@@ -52,6 +59,9 @@ const ARTIFACT_KINDS: ReadonlySet<StoredArtifact['kind']> = new Set([
   'kg_edge',
   'insight_item',
 ]);
+
+/** The provenance families a stored source may carry (mirrors `StoredSource.origin`). */
+const SOURCE_ORIGINS: ReadonlySet<StoredSource['origin']> = new Set(['file', 'paste', 'obsidian']);
 
 /** The four packaging tiers, in display order (team-10 §1.2). */
 const TIERS: readonly Tier[] = ['free', 'pro', 'team', 'enterprise'];
@@ -172,14 +182,14 @@ function origin(req: IncomingMessage): { base: string; secure: boolean } {
   return { base: `${proto}://${host}`, secure: proto === 'https' };
 }
 
-/** Read a JSON request body, bounded by `MAX_BODY_BYTES`. */
-function readJsonBody(req: IncomingMessage): Promise<unknown> {
+/** Read a JSON request body, bounded by `maxBytes` (default `MAX_BODY_BYTES`). */
+function readJsonBody(req: IncomingMessage, maxBytes: number = MAX_BODY_BYTES): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks: Buffer[] = [];
     req.on('data', (c: Buffer) => {
       size += c.length;
-      if (size > MAX_BODY_BYTES) {
+      if (size > maxBytes) {
         reject(new Error('body too large'));
         req.destroy();
         return;
@@ -223,6 +233,13 @@ function coerceArtifacts(input: unknown): ArtifactInput[] {
     if (out.length >= 2000) break; // bound how many artifacts one save can carry
   }
   return out;
+}
+
+/** A stored source WITHOUT its `text` — the list/metadata shape (F3 §7). */
+function sourceMeta(s: StoredSource): Omit<StoredSource, 'text'> {
+  const { text: _text, ...meta } = s;
+  void _text;
+  return meta;
 }
 
 /**
@@ -423,6 +440,105 @@ export async function handleAccountRequest(
       return true;
     }
     sendJson(res, 200, { ok: true, quota: await sys.service.quotaStatus(accountId) });
+    return true;
+  }
+
+  // --- /api/sources — stored-source CRUD (F3 Phase B, all account-scoped) ---
+  if (path === '/api/sources') {
+    const accountId = currentAccountId(req, sys);
+    if (!accountId || !(await sys.service.getAccount(accountId))) {
+      sendJson(res, 401, { error: 'not_authenticated' });
+      return true;
+    }
+    if (method === 'GET') {
+      // Metadata only — the list never ships the stored text (F3 §7).
+      const sources = (await sys.service.listSources(accountId)).map(sourceMeta);
+      sendJson(res, 200, { sources, quota: await sys.service.sourceQuotaStatus(accountId) });
+      return true;
+    }
+    if (method === 'POST') {
+      let body: {
+        id?: unknown;
+        title?: unknown;
+        origin?: unknown;
+        mime?: unknown;
+        text?: unknown;
+        consent_class?: unknown;
+      };
+      try {
+        body = (await readJsonBody(req, MAX_SOURCE_BODY_BYTES)) as typeof body;
+      } catch (err) {
+        sendJson(res, 400, { error: 'bad_request', message: String((err as Error)?.message ?? err) });
+        return true;
+      }
+      const text = typeof body.text === 'string' ? body.text : '';
+      if (!text.trim()) {
+        sendJson(res, 400, { error: 'bad_request', message: 'text is required' });
+        return true;
+      }
+      const origin = SOURCE_ORIGINS.has(body.origin as StoredSource['origin'])
+        ? (body.origin as StoredSource['origin'])
+        : 'file';
+      // Consent is server-determined + fail-closed (same posture as saveResource):
+      // the client may only UPGRADE a save to 'sensitive', never downgrade.
+      const sensitive = body.consent_class === 'sensitive';
+      try {
+        const saved = await sys.service.saveSource(accountId, {
+          ...(typeof body.id === 'string' && body.id ? { id: body.id } : {}),
+          title:
+            typeof body.title === 'string' && body.title
+              ? body.title.slice(0, MAX_STORED_SOURCE_TITLE)
+              : 'Untitled source',
+          origin,
+          ...(typeof body.mime === 'string' && body.mime ? { mime: body.mime.slice(0, 200) } : {}),
+          text: text.slice(0, MAX_STORED_SOURCE_TEXT),
+          consentClass: sensitive ? 'sensitive' : 'standard',
+          piiPresent: sensitive,
+        });
+        sendJson(res, 201, {
+          saved: sourceMeta(saved),
+          quota: await sys.service.sourceQuotaStatus(accountId),
+        });
+      } catch (err) {
+        if (err instanceof SourceQuotaExceededError) {
+          sendJson(res, 409, err.body);
+        } else {
+          sendJson(res, 500, { error: 'save_failed', message: String((err as Error)?.message ?? err) });
+        }
+      }
+      return true;
+    }
+  }
+
+  // --- /api/sources/:id — read (incl. text) or delete one of MY sources ---
+  // The repo is account-scoped, so get/delete already return null/false for another
+  // account's id — a 404 falls out naturally (team-09 T6).
+  const srcIdMatch = /^\/api\/sources\/([^/]+)$/.exec(path);
+  if (srcIdMatch && (method === 'GET' || method === 'DELETE')) {
+    const accountId = currentAccountId(req, sys);
+    if (!accountId || !(await sys.service.getAccount(accountId))) {
+      sendJson(res, 401, { error: 'not_authenticated' });
+      return true;
+    }
+    const id = decodeURIComponent(srcIdMatch[1]!);
+
+    if (method === 'GET') {
+      const source = await sys.service.getSource(accountId, id);
+      if (!source) {
+        sendJson(res, 404, { error: 'not_found' });
+        return true;
+      }
+      sendJson(res, 200, { source }); // full source incl. text (to reload into the library)
+      return true;
+    }
+
+    // DELETE — frees byte quota.
+    const removed = await sys.service.deleteSource(accountId, id);
+    if (!removed) {
+      sendJson(res, 404, { error: 'not_found' });
+      return true;
+    }
+    sendJson(res, 200, { ok: true, quota: await sys.service.sourceQuotaStatus(accountId) });
     return true;
   }
 

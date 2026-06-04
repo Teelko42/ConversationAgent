@@ -1,0 +1,82 @@
+{
+  "$ref": "#/definitions/stored_source",
+  "definitions": {
+    "stored_source": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "account_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "title": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string",
+          "enum": [
+            "file",
+            "paste",
+            "obsidian"
+          ]
+        },
+        "mime": {
+          "type": "string"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "text": {
+          "type": "string"
+        },
+        "consent_class": {
+          "type": "string",
+          "enum": [
+            "standard",
+            "sensitive"
+          ]
+        },
+        "pii_present": {
+          "type": "boolean"
+        },
+        "created_at_us": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "updated_at_us": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expires_at_us": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "account_id",
+        "title",
+        "origin",
+        "bytes",
+        "text",
+        "consent_class",
+        "pii_present",
+        "created_at_us",
+        "updated_at_us",
+        "expires_at_us"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

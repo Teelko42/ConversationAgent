@@ -68,11 +68,13 @@ export async function explainSentence(
   const sentence = input.text.trim();
   let degraded = false;
 
-  // 1) Explain + break down + classify (Sonnet via routeTier('enrich')).
+  // 1) Explain + break down + classify (Sonnet via routeTier('enrich')). The asker's
+  //    own connected sources (Obsidian vault / files / pasted notes) are folded in so
+  //    the EXPLANATION itself is grounded in their context — not only the answer.
   const res = await gateway.invoke({
     kind: 'enrich',
     tenantId: input.tenant_id,
-    prompt: buildExplainPrompt(sentence),
+    prompt: buildExplainPrompt(sentence, opts.userSources ?? []),
     estOutputTokens: 400,
   });
 
@@ -268,10 +270,20 @@ export async function answerFollowup(
 // ---------------------------------------------------------------------------
 // Prompts
 // ---------------------------------------------------------------------------
-function buildExplainPrompt(sentence: string): string {
+function buildExplainPrompt(sentence: string, userSources: UserSource[] = []): string {
+  // When the asker has connected their own notes/files (e.g. an Obsidian vault),
+  // fold the relevant ones in so the EXPLANATION is grounded in their context.
+  // Appended ONLY when present, so the no-sources prompt is byte-for-byte unchanged.
+  const context = userSources.length
+    ? `The person has connected their own notes/files (e.g. an Obsidian vault). Use ` +
+      `them to inform the explanation when relevant to the sentence — prefer their ` +
+      `terminology and specifics, and do not invent details that are not in them.\n` +
+      `Their context:\n${userSourcesBlock(userSources)}\n\n`
+    : '';
   return (
     `You help someone understand a sentence from a live conversation.\n\n` +
     `Sentence: "${sentence}"\n\n` +
+    context +
     `Reply with ONLY a JSON object, no prose:\n` +
     `{"explanation": "<one or two plain-language sentences explaining what the ` +
     `whole sentence means>", ` +
@@ -352,11 +364,18 @@ function buildFollowupPrompt(
   );
 }
 
-/** A user source as a citation (`type:'user'`, url only when the user gave one). */
+/**
+ * A user source as a citation. The citation `type` carries provenance from the
+ * source's `origin` (F3 §4 polish): a local `file` or an `obsidian` note keep their
+ * kind for the UI to icon/group; a pasted note (or no origin) is plain `type:'user'`.
+ * url is included only when the user gave one (web-only requires it, INV-1/2).
+ */
 function userCitation(citationId: string, u: UserSource): ExplanationSource {
+  const type: ExplanationSource['type'] =
+    u.origin === 'file' ? 'file' : u.origin === 'obsidian' ? 'obsidian' : 'user';
   return {
     citation_id: citationId,
-    type: 'user',
+    type,
     ...(u.url ? { url: u.url } : {}),
     ...(u.title ? { title: u.title } : {}),
     snippet: (u.text ?? '').slice(0, 400),

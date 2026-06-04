@@ -12,11 +12,12 @@
  * synchronous stores simply resolve immediately. The service `await`s every call.
  *
  * Resource reads are **account-scoped at the data layer**: `getSavedSession`,
- * `listSavedSessions`, `deleteSavedSession`, and `listArtifacts` all take the
- * `accountId` and only ever return that account's rows — so cross-account access
- * is structurally impossible, not just filtered in a handler (team-09 T6).
+ * `listSavedSessions`, `deleteSavedSession`, `listArtifacts`, and the F3 Phase-B
+ * stored-source methods all take the `accountId` and only ever return that account's
+ * rows — so cross-account access is structurally impossible, not just filtered in a
+ * handler (team-09 T6).
  */
-import type { Account, Identity, SavedSession, StoredArtifact } from '@aizen/contracts';
+import type { Account, Identity, SavedSession, StoredArtifact, StoredSource } from '@aizen/contracts';
 
 export interface AccountRepository {
   // --- accounts + identities (the control plane) ---
@@ -43,6 +44,20 @@ export interface AccountRepository {
   /** Scoped: artifacts of `sessionId` only if that session belongs to `accountId`. */
   listArtifacts(accountId: string, sessionId: string): Promise<StoredArtifact[]>;
 
+  // --- stored sources (F3 Phase B), the byte-metered quota unit. All scoped. ---
+  /** Insert or replace a stored source (keyed by its id, owned by `account_id`). */
+  addSource(source: StoredSource): Promise<void>;
+  /** Scoped: returns the source only if it belongs to `accountId`, else null. */
+  getSource(accountId: string, id: string): Promise<StoredSource | null>;
+  /** Scoped: all of an account's stored sources, newest first. */
+  listSources(accountId: string): Promise<StoredSource[]>;
+  /** Scoped: how many stored sources an account has. */
+  countSources(accountId: string): Promise<number>;
+  /** Scoped: total `bytes` across an account's stored sources (the quota measure). */
+  sumSourceBytes(accountId: string): Promise<number>;
+  /** Scoped delete; returns true iff a row owned by `accountId` was removed. */
+  deleteSource(accountId: string, id: string): Promise<boolean>;
+
   /** Release any underlying resource (DB pool / file handle). Optional. */
   close?(): Promise<void> | void;
 }
@@ -59,6 +74,7 @@ export class InMemoryAccountRepository implements AccountRepository {
   private readonly identities = new Map<string, Identity>(); // key: `${provider}:${subject}`
   private readonly sessions = new Map<string, SavedSession>(); // key: session id
   private readonly artifacts: StoredArtifact[] = [];
+  private readonly storedSources = new Map<string, StoredSource>(); // key: source id
 
   private static idKey(provider: string, subject: string): string {
     return `${provider}:${subject}`;
@@ -138,5 +154,41 @@ export class InMemoryAccountRepository implements AccountRepository {
     return this.artifacts
       .filter((a) => a.session_id === sessionId && a.account_id === accountId)
       .map((a) => ({ ...a }));
+  }
+
+  // --- stored sources (F3 Phase B) — all reads filtered by account_id ---
+  async addSource(source: StoredSource): Promise<void> {
+    this.storedSources.set(source.id, { ...source });
+  }
+
+  async getSource(accountId: string, id: string): Promise<StoredSource | null> {
+    const s = this.storedSources.get(id);
+    return s && s.account_id === accountId ? { ...s } : null;
+  }
+
+  async listSources(accountId: string): Promise<StoredSource[]> {
+    return [...this.storedSources.values()]
+      .filter((s) => s.account_id === accountId)
+      .sort((a, b) => b.created_at_us - a.created_at_us)
+      .map((s) => ({ ...s }));
+  }
+
+  async countSources(accountId: string): Promise<number> {
+    let n = 0;
+    for (const s of this.storedSources.values()) if (s.account_id === accountId) n++;
+    return n;
+  }
+
+  async sumSourceBytes(accountId: string): Promise<number> {
+    let total = 0;
+    for (const s of this.storedSources.values()) if (s.account_id === accountId) total += s.bytes;
+    return total;
+  }
+
+  async deleteSource(accountId: string, id: string): Promise<boolean> {
+    const s = this.storedSources.get(id);
+    if (!s || s.account_id !== accountId) return false;
+    this.storedSources.delete(id);
+    return true;
   }
 }

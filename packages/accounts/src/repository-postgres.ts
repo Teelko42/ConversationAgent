@@ -29,7 +29,7 @@
  */
 import { Pool } from 'pg';
 import type { PoolConfig } from 'pg';
-import type { Account, Identity, SavedSession, StoredArtifact } from '@aizen/contracts';
+import type { Account, Identity, SavedSession, StoredArtifact, StoredSource } from '@aizen/contracts';
 import type { AccountRepository } from './repository.js';
 
 const SCHEMA = `
@@ -73,6 +73,21 @@ CREATE TABLE IF NOT EXISTS artifacts (
   PRIMARY KEY (session_id, id)
 );
 CREATE INDEX IF NOT EXISTS idx_artifacts_session ON artifacts(session_id, account_id);
+CREATE TABLE IF NOT EXISTS sources (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  origin TEXT NOT NULL,
+  mime TEXT,
+  bytes BIGINT NOT NULL,
+  text TEXT NOT NULL,
+  consent_class TEXT NOT NULL,
+  pii_present BOOLEAN NOT NULL,
+  created_at_us BIGINT NOT NULL,
+  updated_at_us BIGINT NOT NULL,
+  expires_at_us BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_sources_account ON sources(account_id);
 `;
 
 export interface PgOpenOptions {
@@ -259,13 +274,79 @@ export class PgAccountRepository implements AccountRepository {
     return rows.map(rowToArtifact);
   }
 
+  // --- stored sources (F3 Phase B) — all reads scoped by account_id ---
+  async addSource(source: StoredSource): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO sources
+         (id, account_id, title, origin, mime, bytes, text, consent_class, pii_present, created_at_us, updated_at_us, expires_at_us)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       ON CONFLICT (id) DO UPDATE SET title=EXCLUDED.title, origin=EXCLUDED.origin, mime=EXCLUDED.mime,
+         bytes=EXCLUDED.bytes, text=EXCLUDED.text, consent_class=EXCLUDED.consent_class,
+         pii_present=EXCLUDED.pii_present, updated_at_us=EXCLUDED.updated_at_us, expires_at_us=EXCLUDED.expires_at_us`,
+      [
+        source.id,
+        source.account_id,
+        source.title,
+        source.origin,
+        source.mime ?? null,
+        source.bytes,
+        source.text,
+        source.consent_class,
+        source.pii_present,
+        source.created_at_us,
+        source.updated_at_us,
+        source.expires_at_us,
+      ],
+    );
+  }
+
+  async getSource(accountId: string, id: string): Promise<StoredSource | null> {
+    const { rows } = await this.pool.query<Record<string, unknown>>(
+      `SELECT * FROM sources WHERE id = $1 AND account_id = $2`,
+      [id, accountId],
+    );
+    return rows[0] ? rowToSource(rows[0]) : null;
+  }
+
+  async listSources(accountId: string): Promise<StoredSource[]> {
+    const { rows } = await this.pool.query<Record<string, unknown>>(
+      `SELECT * FROM sources WHERE account_id = $1 ORDER BY created_at_us DESC`,
+      [accountId],
+    );
+    return rows.map(rowToSource);
+  }
+
+  async countSources(accountId: string): Promise<number> {
+    const { rows } = await this.pool.query<{ c: string }>(
+      `SELECT COUNT(*) AS c FROM sources WHERE account_id = $1`,
+      [accountId],
+    );
+    return Number(rows[0]?.c ?? 0);
+  }
+
+  async sumSourceBytes(accountId: string): Promise<number> {
+    const { rows } = await this.pool.query<{ b: string }>(
+      `SELECT COALESCE(SUM(bytes), 0) AS b FROM sources WHERE account_id = $1`,
+      [accountId],
+    );
+    return Number(rows[0]?.b ?? 0);
+  }
+
+  async deleteSource(accountId: string, id: string): Promise<boolean> {
+    const res = await this.pool.query(`DELETE FROM sources WHERE id = $1 AND account_id = $2`, [
+      id,
+      accountId,
+    ]);
+    return !!res.rowCount;
+  }
+
   /**
    * TEST-ONLY: clear every table. Used by the opt-in Postgres contract test
    * (`repository.test.ts`, enabled via `TEST_DATABASE_URL`) to start each case
    * from a clean slate. Not part of the `AccountRepository` interface.
    */
   async truncateAll(): Promise<void> {
-    await this.pool.query('TRUNCATE artifacts, saved_sessions, identities, accounts');
+    await this.pool.query('TRUNCATE sources, artifacts, saved_sessions, identities, accounts');
   }
 }
 
@@ -340,4 +421,23 @@ function rowToArtifact(r: Record<string, unknown>): StoredArtifact {
     payload,
     created_at_us: num(r.created_at_us),
   };
+}
+
+function rowToSource(r: Record<string, unknown>): StoredSource {
+  const out: StoredSource = {
+    id: str(r.id),
+    account_id: str(r.account_id),
+    title: str(r.title),
+    origin: str(r.origin) as StoredSource['origin'],
+    bytes: num(r.bytes), // BIGINT → string → Number (values < 2^53, exact)
+    text: str(r.text),
+    consent_class: str(r.consent_class) as StoredSource['consent_class'],
+    pii_present: Boolean(r.pii_present), // real BOOLEAN column
+    created_at_us: num(r.created_at_us),
+    updated_at_us: num(r.updated_at_us),
+    expires_at_us: numOrNull(r.expires_at_us),
+  };
+  const mime = strOrNull(r.mime);
+  if (mime) out.mime = mime;
+  return out;
 }

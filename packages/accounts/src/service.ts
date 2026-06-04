@@ -19,18 +19,21 @@ import {
   AccountSchema,
   IdentitySchema,
   SavedSessionSchema,
+  StoredSourceSchema,
   type Account,
   type Entitlement,
   type Identity,
   type QuotaStatus,
   type SavedSession,
+  type SourceQuotaStatus,
   type StoredArtifact,
+  type StoredSource,
   type Tier,
 } from '@aizen/contracts';
 import type { ExternalIdentity } from './auth-provider.js';
 import type { AccountRepository } from './repository.js';
 import { DEFAULT_ENTITLEMENTS, entitlementFor, retentionDeadlineUs } from './entitlements.js';
-import { checkQuota } from './quota.js';
+import { checkQuota, checkSourceQuota } from './quota.js';
 
 export interface AccountServiceOptions {
   repo: AccountRepository;
@@ -59,6 +62,19 @@ export interface SaveResourceInput {
   consentClass: SavedSession['consent_class'];
   piiPresent: boolean;
   artifacts?: ArtifactInput[];
+}
+
+/** One stored source to persist (F3 Phase B). Stores EXTRACTED TEXT only (F3 §8). */
+export interface SaveSourceInput {
+  /** Omit to mint a new source; pass an existing id to update one in place. */
+  id?: string;
+  title: string;
+  origin: StoredSource['origin'];
+  mime?: string;
+  text: string;
+  /** Carried forward from the live session's consent context (team-09). */
+  consentClass: SavedSession['consent_class'];
+  piiPresent: boolean;
 }
 
 export class AccountService {
@@ -217,5 +233,79 @@ export class AccountService {
 
   async deleteResource(accountId: string, id: string): Promise<boolean> {
     return this.repo.deleteSavedSession(accountId, id);
+  }
+
+  // --- stored sources (F3 Phase B) — byte-metered, fail-closed -------------
+
+  /** The byte-quota view for an account's stored sources ("X KB of N MB used"). */
+  async sourceQuotaStatus(accountId: string): Promise<SourceQuotaStatus> {
+    const account = await this.repo.getAccount(accountId);
+    const tier: Tier = account?.tier ?? this.defaultTier;
+    const ent = this.entitlement(tier);
+    const usedBytes = await this.repo.sumSourceBytes(accountId);
+    const count = await this.repo.countSources(accountId);
+    const limit = ent.max_source_bytes;
+    return {
+      tier,
+      used_bytes: usedBytes,
+      limit_bytes: limit,
+      count,
+      retention_window_days: ent.retention_window_days,
+      exceeded: limit !== null && usedBytes >= limit,
+    };
+  }
+
+  /**
+   * Persist a stored source (extracted text only), enforcing the tier BYTE cap
+   * fail-closed (F3 §5). A save that would push the account's total stored-source
+   * bytes over `max_source_bytes` throws a typed `SourceQuotaExceededError` (hard
+   * reject). Re-saving an existing source (`input.id`) UPDATES it; the quota check
+   * counts the delta (the existing bytes are excluded from the baseline) so a same-
+   * size edit never trips the cap. Consent is carried forward (team-09).
+   */
+  async saveSource(accountId: string, input: SaveSourceInput): Promise<StoredSource> {
+    const account = await this.repo.getAccount(accountId);
+    if (!account) throw new Error('saveSource: unknown account');
+    const ent = this.entitlement(account.tier);
+
+    const bytes = Buffer.byteLength(input.text, 'utf8');
+    const id = input.id ?? this.genId();
+    const existing = input.id ? await this.repo.getSource(accountId, id) : null;
+    const usedBytes = await this.repo.sumSourceBytes(accountId);
+    // When replacing, the existing bytes are already in `usedBytes` — exclude them
+    // from the baseline so we only admit against the net change (fail-closed).
+    const baseline = existing ? Math.max(0, usedBytes - existing.bytes) : usedBytes;
+    const verdict = checkSourceQuota(account.tier, baseline, bytes, ent.max_source_bytes);
+    if (!verdict.ok) throw verdict.error;
+
+    const nowUs = this.nowUs();
+    const source = StoredSourceSchema.parse({
+      id,
+      account_id: accountId,
+      title: input.title || 'Untitled source',
+      origin: input.origin,
+      ...(input.mime ? { mime: input.mime } : {}),
+      bytes,
+      text: input.text,
+      consent_class: input.consentClass,
+      pii_present: input.piiPresent,
+      created_at_us: existing?.created_at_us ?? nowUs,
+      updated_at_us: nowUs,
+      expires_at_us: existing?.expires_at_us ?? retentionDeadlineUs(ent, nowUs),
+    });
+    await this.repo.addSource(source);
+    return source;
+  }
+
+  async listSources(accountId: string): Promise<StoredSource[]> {
+    return this.repo.listSources(accountId);
+  }
+
+  async getSource(accountId: string, id: string): Promise<StoredSource | null> {
+    return this.repo.getSource(accountId, id);
+  }
+
+  async deleteSource(accountId: string, id: string): Promise<boolean> {
+    return this.repo.deleteSource(accountId, id);
   }
 }

@@ -11,43 +11,66 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { loadConfig, providerStatus } from './config.js';
 import { createSession, type SessionHandle } from './session.js';
 import { buildAccountSystem, handleAccountRequest } from './accounts.js';
 import type { UserSource } from '@aizen/contracts';
 
-// Bounds on the BYO user-source context a client may attach to a request (F2 §6),
-// mirroring `coerceArtifacts`' fail-safe posture: cap the count and each text size
-// so a single frame can't carry an unbounded prompt. User text is conversation
-// data (team-09) — it is passed through to the engine, never logged raw here.
-const MAX_USER_SOURCES = 20;
+// Bounds on the BYO user-source context a client may attach to a request (F2 §6 /
+// S0), mirroring `coerceArtifacts`' fail-safe posture: cap the count and each text
+// size so a single frame can't carry an unbounded prompt. With S0's chunked
+// retrieval each item is small (~600 chars) but there are MORE of them, so the
+// count cap is raised (S0 "Server alignment") and an AGGREGATE byte ceiling bounds
+// the whole array regardless of count. User text is conversation data (team-09) —
+// it is passed through to the engine, never logged raw here.
+const MAX_USER_SOURCES = 40;
 const MAX_USER_SOURCE_TEXT = 4096;
-const MAX_USER_SOURCE_TITLE = 200;
+const MAX_USER_SOURCE_TITLE = 512;
 const MAX_USER_SOURCE_URL = 2048;
+const MAX_USER_SOURCES_TOTAL_BYTES = 64 * 1024; // aggregate ceiling over all items' text
+/** Provenance of a BYO source (S0 / F3 §4 polish). Unknown values drop to undefined. */
+const USER_SOURCE_ORIGINS: ReadonlySet<string> = new Set(['paste', 'file', 'obsidian']);
 
 /** Coerce a client-supplied `user_sources` list into validated, bounded sources. */
 function coerceUserSources(input: unknown): UserSource[] {
   if (!Array.isArray(input)) return [];
   const out: UserSource[] = [];
+  let totalBytes = 0;
   for (const s of input) {
     if (!s || typeof s !== 'object') continue;
     const text = (s as { text?: unknown }).text;
     if (typeof text !== 'string' || !text.trim()) continue; // text is required
+    const clipped = text.slice(0, MAX_USER_SOURCE_TEXT);
+    // Aggregate byte ceiling: stop once the whole array would exceed the budget
+    // (UTF-8-ish via Buffer.byteLength) so one frame can't carry an unbounded prompt.
+    const bytes = Buffer.byteLength(clipped, 'utf8');
+    if (totalBytes + bytes > MAX_USER_SOURCES_TOTAL_BYTES) break;
+    totalBytes += bytes;
     const id = (s as { id?: unknown }).id;
     const title = (s as { title?: unknown }).title;
     const url = (s as { url?: unknown }).url;
+    const origin = (s as { origin?: unknown }).origin;
     out.push({
       id: typeof id === 'string' && id ? id : `us_${out.length}`,
-      text: text.slice(0, MAX_USER_SOURCE_TEXT),
+      text: clipped,
       ...(typeof title === 'string' && title ? { title: title.slice(0, MAX_USER_SOURCE_TITLE) } : {}),
       ...(typeof url === 'string' && url ? { url: url.slice(0, MAX_USER_SOURCE_URL) } : {}),
+      ...(typeof origin === 'string' && USER_SOURCE_ORIGINS.has(origin)
+        ? { origin: origin as UserSource['origin'] }
+        : {}),
     });
     if (out.length >= MAX_USER_SOURCES) break;
   }
   return out;
 }
+
+// Max size of a single JSON control text-frame (explain/ask/stop). Binary audio is
+// implicitly bounded by the capture pipeline, but a JSON control frame was not —
+// mirror `readJsonBody`'s MAX_BODY_BYTES posture so a malformed/oversized frame is
+// dropped rather than parsed. Comfortably fits 40 chunks + transcript context.
+const MAX_WS_TEXT_BYTES = 512 * 1024;
 
 const here = dirname(fileURLToPath(import.meta.url));
 const publicDir = resolve(here, '../public');
@@ -56,8 +79,41 @@ const STATIC: Record<string, { file: string; type: string }> = {
   '/': { file: 'index.html', type: 'text/html; charset=utf-8' },
   '/index.html': { file: 'index.html', type: 'text/html; charset=utf-8' },
   '/client.js': { file: 'client.js', type: 'text/javascript; charset=utf-8' },
+  // S0 source library + retrieval and the F4 Obsidian seam — loaded before client.js.
+  '/sources.js': { file: 'sources.js', type: 'text/javascript; charset=utf-8' },
+  '/obsidian.js': { file: 'obsidian.js', type: 'text/javascript; charset=utf-8' },
   '/styles.css': { file: 'styles.css', type: 'text/css; charset=utf-8' },
 };
+
+const vendorDir = resolve(publicDir, 'vendor');
+
+/** Content-type for a vendored asset by extension (F3 — vendored pdf.js etc.). */
+const VENDOR_TYPES: Record<string, string> = {
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.wasm': 'application/wasm',
+  '.json': 'application/json; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.bcmap': 'application/octet-stream',
+};
+
+/**
+ * Resolve a `/vendor/<path>` request to a real file under `public/vendor`, or null
+ * if the path escapes the directory (traversal) or has no served extension. Lets the
+ * client lazily `import('/vendor/pdf.mjs')` for PDF extraction (F3 §3) — see
+ * `public/vendor/README.md`. Absent files simply 404 (the UI shows a clear message).
+ */
+function resolveVendor(path: string): { file: string; type: string } | null {
+  const rel = decodeURIComponent(path.slice('/vendor/'.length));
+  if (!rel || rel.includes('\0')) return null;
+  const abs = resolve(vendorDir, rel);
+  if (abs !== vendorDir && !abs.startsWith(vendorDir + sep)) return null; // no traversal
+  const ext = abs.slice(abs.lastIndexOf('.'));
+  const type = VENDOR_TYPES[ext];
+  if (!type) return null;
+  return { file: abs, type };
+}
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
@@ -72,23 +128,35 @@ async function main(): Promise<void> {
       .then((handled) => {
         if (handled) return;
         const path = (req.url ?? '/').split('?')[0] ?? '/';
+        // Vendored, lazily-imported assets (e.g. /vendor/pdf.mjs for F3 PDF parsing)
+        // are served from public/vendor with a traversal-safe resolver; an absent
+        // file 404s (the UI then shows a clear "vendor pdf.js" message).
+        const vendor = path.startsWith('/vendor/') ? resolveVendor(path) : null;
         const route = STATIC[path];
-        if (!route) {
+        if (!vendor && !route) {
           res.writeHead(404, { 'content-type': 'text/plain' });
           res.end('not found');
           return;
         }
-        readFile(join(publicDir, route.file))
+        const filePath = vendor ? vendor.file : join(publicDir, route!.file);
+        const type = vendor ? vendor.type : route!.type;
+        readFile(filePath)
           .then((buf) => {
             // No-store: the client (index.html / client.js / styles.css) is served
             // straight from disk and iterated often, so never let a browser keep a
             // stale copy — a plain refresh always gets the latest UI.
-            res.writeHead(200, { 'content-type': route.type, 'cache-control': 'no-store' });
+            res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store' });
             res.end(buf);
           })
           .catch(() => {
-            res.writeHead(500, { 'content-type': 'text/plain' });
-            res.end('failed to read asset');
+            // A missing vendor file (not yet dropped in) is a 404, not a 500.
+            if (vendor) {
+              res.writeHead(404, { 'content-type': 'text/plain' });
+              res.end('not found');
+            } else {
+              res.writeHead(500, { 'content-type': 'text/plain' });
+              res.end('failed to read asset');
+            }
           });
       })
       .catch((err: unknown) => {
@@ -131,6 +199,9 @@ async function main(): Promise<void> {
         session?.sendAudio(new Uint8Array(data));
         return;
       }
+      // Bound a JSON control frame the same way readJsonBody bounds an HTTP body —
+      // a single oversized text frame is dropped rather than parsed (S0 alignment).
+      if (data.length > MAX_WS_TEXT_BYTES) return;
       // text control frames: stop, explain-this-sentence (F03 click), or ask a
       // typed follow-up about an explained sentence (F1).
       let msg: {

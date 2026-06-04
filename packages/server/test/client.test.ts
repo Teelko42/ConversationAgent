@@ -919,3 +919,245 @@ describe('Theme — light default with a persistent dark toggle', () => {
     expect(pip.document.documentElement.getAttribute('data-theme')).toBe('dark');
   });
 });
+
+// A fake File with an async .text() (the harness has no real File/FileReader).
+function fakeFile(name: string, content: string, type = 'text/markdown') {
+  return { name, size: content.length, type, text: async () => content };
+}
+
+describe('S0/F3 — local files as sources', () => {
+  it('adds files into the library, renders rows, and a follow-up ships the selected chunk', async () => {
+    const h = loadClient();
+    const ws = liveWithExplained(h);
+    expect((h.window as any).AizenSources).toBeTruthy(); // sources.js loaded by the harness
+
+    h.nav.sources.dispatch('click', { preventDefault() {} });
+    const input = h.byId('modal-body').querySelector('.usrc-file-input');
+    expect(input).toBeTruthy();
+    (input as any).files = [
+      fakeFile('spec.md', '# Spec\nProject Zephyr launches in Q4 with offline mode.'),
+      fakeFile('logo.png', '', 'image/png'), // unsupported → errors, does not block the other
+    ];
+    input.dispatch('change', {});
+    await h.tick();
+
+    const body = h.byId('modal-body').textContent;
+    expect(body).toContain('spec.md');
+    expect(body).toContain('Added'); // the .md parsed OK
+    expect(body).toContain('Unsupported'); // the .png errored cleanly
+
+    // A follow-up about the file content selects its chunk as a user source.
+    h.byId('followup-input').value = 'when does Zephyr launch?';
+    h.byId('followup').dispatch('submit', { preventDefault() {} });
+    const asks = ws.sent.map((s) => JSON.parse(s)).filter((m: any) => m.type === 'ask');
+    const ask = asks[asks.length - 1];
+    expect(ask.user_sources.length).toBeGreaterThanOrEqual(1);
+    expect(ask.user_sources.some((u: any) => /Zephyr launches/.test(u.text) && u.origin === 'file')).toBe(true);
+  });
+
+  it('removing a file row drops it from the library', async () => {
+    const h = loadClient();
+    h.nav.sources.dispatch('click', { preventDefault() {} });
+    const input = h.byId('modal-body').querySelector('.usrc-file-input');
+    (input as any).files = [fakeFile('a.md', 'alpha content here')];
+    input.dispatch('change', {});
+    await h.tick();
+    expect((h.window as any).AizenSources.stats('file').docs).toBe(1);
+
+    h.byId('modal-body').querySelector('.usrc-remove').dispatch('click', {});
+    expect((h.window as any).AizenSources.stats('file').docs).toBe(0);
+  });
+});
+
+// Mock File System Access directory handle (async-iterator entries()).
+function dirHandle(name: string, children: any[]): any {
+  return {
+    kind: 'directory',
+    name,
+    entries() {
+      let i = 0;
+      return { next: async () => (i < children.length ? { value: [children[i].name, children[i++]], done: false } : { value: undefined, done: true }) };
+    },
+  };
+}
+function fileHandle(name: string, content: string): any {
+  return { kind: 'file', name, getFile: async () => ({ text: async () => content }) };
+}
+
+describe('F4 — connect Obsidian vault', () => {
+  it('connects via the directory picker, indexes notes (skipping .obsidian), and Disconnect clears', async () => {
+    const h = loadClient();
+    const vault = dirHandle('MyVault', [
+      fileHandle('welcome.md', '# Welcome\nProject Zephyr is our codename.'),
+      dirHandle('.obsidian', [fileHandle('app.json', '{}')]), // ignored
+      dirHandle('notes', [fileHandle('budget.md', '---\ntags: x\n---\n# Budget\nThe budget is 1000 dollars.')]),
+    ]);
+    (h.window as any).showDirectoryPicker = async () => vault;
+
+    h.nav.sources.dispatch('click', { preventDefault() {} });
+    const connectBtn = h.byId('modal-body').querySelectorAll('button').find((b: any) => b.textContent === 'Connect Obsidian vault');
+    expect(connectBtn).toBeTruthy();
+    connectBtn.dispatch('click', {});
+    await h.tick();
+    await h.tick();
+
+    const body = h.byId('modal-body').textContent;
+    expect(body).toContain('Connected');
+    expect(body).toContain('MyVault');
+    expect(body).toContain('2 notes'); // welcome.md + notes/budget.md; .obsidian skipped
+    // frontmatter stripped + path titles in the library; the budget note is retrievable
+    const sel = (h.window as any).AizenSources.selectFor('what is the budget?');
+    expect(sel.some((u: any) => /budget is 1000/i.test(u.text))).toBe(true);
+    expect(sel.some((u: any) => /\.md$/.test(u.title || ''))).toBe(true); // title = note path
+
+    // Disconnect clears the vault's docs.
+    h.byId('modal-body').querySelectorAll('button').find((b: any) => b.textContent === 'Disconnect').dispatch('click', {});
+    expect((h.window as any).AizenSources.stats('obsidian').docs).toBe(0);
+  });
+
+  it('renders an Obsidian citation as a labeled chip in the Explanation panel + inline answer', () => {
+    const h = loadClient();
+    const ws = h.sockets[0]!;
+    ws.readyState = 1;
+    if (ws.onopen) ws.onopen();
+    ws.onmessage!({ data: JSON.stringify({ type: 'status', mode: 'live', providers: { stt: 'deepgram', llm: 'anthropic', search: 'tavily' } }) });
+    ws.onmessage!({ data: JSON.stringify({ type: 'envelope', env: { segment_id: 's1', rev: 1, is_final: true, text: 'What is Zephyr?', speaker: { display_name: 'A' } } }) });
+    ws.onmessage!({
+      data: JSON.stringify({
+        type: 'explanation',
+        explanation: {
+          segment_id: 's1', sentence: 'What is Zephyr?', explanation: 'Asks about Zephyr.', breakdown: [],
+          is_question: true, answer: 'Per your vault, Zephyr is the mobile app.',
+          sources: [
+            { citation_id: 'c1', type: 'web', url: 'https://x/zephyr', title: 'Web ref' },
+            { citation_id: 'c2', type: 'obsidian', title: 'notes/zephyr.md', snippet: 'Zephyr is the codename...' },
+          ],
+          state: 'ok',
+        },
+      }),
+    });
+
+    // Inline answer under the line shows the vault chip (🔮) alongside the web link.
+    expect(h.byId('transcript').textContent).toContain('🔮 notes/zephyr.md');
+
+    // The full Explanation panel shows the obsidian chip AND keeps the web link.
+    const line = h.byId('transcript').children[0]!;
+    h.byId('transcript').dispatch('click', { target: line });
+    const panel = h.byId('explanation');
+    const chips = panel.querySelectorAll('.src-chip');
+    expect(chips.length).toBe(1);
+    expect(chips[0].classList.contains('src-chip-obsidian')).toBe(true);
+    expect(panel.querySelectorAll('a').some((a: any) => a.href === 'https://x/zephyr')).toBe(true);
+  });
+
+  it('renders both connection options as matched .btn buttons (picker + a styled upload, no raw file field)', () => {
+    const h = loadClient();
+    (h.window as any).showDirectoryPicker = async () => ({}); // make the picker path available
+    h.nav.sources.dispatch('click', { preventDefault() {} });
+    const card = h.byId('modal-body').querySelector('.obs-card');
+    const buttons = card.querySelectorAll('button');
+    const labels = buttons.map((b: any) => b.textContent);
+    expect(labels).toContain('Connect Obsidian vault');
+    expect(labels).toContain('Upload vault folder');
+    // Both are styled .btn pills (matched), and the file <input> is hidden — the
+    // upload is fired by the button, not shown as a raw "No file chosen" control.
+    buttons.forEach((b: any) => expect(b.classList.contains('btn')).toBe(true));
+    expect(h.byId('modal-body').querySelector('.obs-upload').style.display).toBe('none');
+  });
+
+  it('falls back to the webkitdirectory upload when no directory picker exists', async () => {
+    const h = loadClient(); // no window.showDirectoryPicker
+    h.nav.sources.dispatch('click', { preventDefault() {} });
+    const upload = h.byId('modal-body').querySelector('.obs-upload');
+    expect(upload).toBeTruthy();
+    const f = (path: string, content: string) => ({ name: path.split('/').pop(), webkitRelativePath: path, text: async () => content });
+    (upload as any).files = [
+      f('Vault/a.md', '# A\nfirst note'),
+      f('Vault/.trash/old.md', 'deleted'), // ignored
+      f('Vault/sub/b.md', '# B\nsecond note'),
+    ];
+    upload.dispatch('change', {});
+    await h.tick();
+    await h.tick();
+    expect(h.byId('modal-body').textContent).toContain('Connected');
+    expect(h.byId('modal-body').textContent).toContain('2 notes');
+  });
+});
+
+describe('F3 Phase B — persist sources to the account', () => {
+  /** A signed-in session + a stateful stored-sources backend (byte-quota gated). */
+  function makeStored(limitBytes = 100000) {
+    let sources: any[] = [];
+    let seq = 0;
+    const used = () => sources.reduce((n, s) => n + s.bytes, 0);
+    const quota = () => ({ tier: 'free', used_bytes: used(), limit_bytes: limitBytes, count: sources.length, retention_window_days: 7, exceeded: used() >= limitBytes });
+    const fetch = (url: string, init?: any) => {
+      const m = (init && init.method) || 'GET';
+      if (url.startsWith('/api/sources/')) {
+        const id = decodeURIComponent(url.slice('/api/sources/'.length));
+        if (m === 'DELETE') { sources = sources.filter((s) => s.id !== id); return { ok: true, status: 200, json: async () => ({ ok: true, quota: quota() }) }; }
+        const s = sources.find((x) => x.id === id);
+        return s ? { ok: true, status: 200, json: async () => ({ source: s }) } : { ok: false, status: 404, json: async () => ({ error: 'not_found' }) };
+      }
+      if (url === '/api/sources' && m === 'GET') return { ok: true, status: 200, json: async () => ({ sources: sources.map(({ text, ...meta }) => meta), quota: quota() }) };
+      if (url === '/api/sources' && m === 'POST') {
+        const b = JSON.parse(init.body);
+        const bytes = b.text.length;
+        if (used() + bytes > limitBytes) return { ok: false, status: 409, json: async () => ({ error: 'quota_exceeded', tier: 'free', used: used(), limit: limitBytes, message: 'Stored-source storage full.', remedy: 'Remove a stored source or upgrade.' }) };
+        seq++; const s = { id: 's' + seq, account_id: 'a1', title: b.title, origin: b.origin, bytes, text: b.text, consent_class: 'standard', pii_present: false, created_at_us: seq, updated_at_us: seq, expires_at_us: null };
+        sources.push(s);
+        return { ok: true, status: 201, json: async () => ({ saved: (({ text, ...meta }) => meta)(s), quota: quota() }) };
+      }
+      if (url.startsWith('/api/session')) {
+        return { ok: true, status: 200, json: async () => ({ authenticated: true, account: { id: 'a1', tier: 'free', display_name: 'Ada' }, identity: { provider: 'google', email: 'a@x.com', display_name: 'Ada' }, quota: { tier: 'free', used: 0, limit: 5, exceeded: false }, providers: ['google'], authMode: 'real' }) };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    };
+    return { fetch, seeded: (s: any) => sources.push(s) };
+  }
+
+  it('signed-in: a Save button persists a source and swaps to a Saved badge + storage line', async () => {
+    const back = makeStored();
+    const h = loadClient({ fetch: back.fetch });
+    await h.tick();
+    await h.tick();
+    h.nav.sources.dispatch('click', { preventDefault() {} });
+    const body = h.byId('modal-body');
+    body.querySelector('.usrc-textarea').value = 'Quarterly revenue grew twenty percent.';
+    body.querySelector('.usrc-add').dispatch('click', {});
+
+    const saveBtn = h.byId('modal-body').querySelector('.src-save-btn');
+    expect(saveBtn).toBeTruthy();
+    saveBtn.dispatch('click', {});
+    await h.tick();
+    await h.tick();
+    expect(h.byId('modal-body').textContent).toContain('Saved');
+    expect(h.byId('modal-body').textContent).toContain('Saved to account:');
+  });
+
+  it('shows the typed quota message when a save is rejected (409)', async () => {
+    const back = makeStored(10); // tiny cap
+    const h = loadClient({ fetch: back.fetch });
+    await h.tick();
+    await h.tick();
+    h.nav.sources.dispatch('click', { preventDefault() {} });
+    const body = h.byId('modal-body');
+    body.querySelector('.usrc-textarea').value = 'This note is far larger than the ten byte cap.';
+    body.querySelector('.usrc-add').dispatch('click', {});
+    h.byId('modal-body').querySelector('.src-save-btn').dispatch('click', {});
+    await h.tick();
+    await h.tick();
+    expect(h.byId('modal-body').textContent).toContain('storage full');
+  });
+
+  it('reloads the account’s stored sources into the library on boot', async () => {
+    const back = makeStored();
+    back.seeded({ id: 's1', account_id: 'a1', title: 'seed.md', origin: 'file', bytes: 30, text: 'The mascot is a blue otter named Pip.', consent_class: 'standard', pii_present: false, created_at_us: 1, updated_at_us: 1, expires_at_us: null });
+    const h = loadClient({ fetch: back.fetch });
+    await h.tick();
+    await h.tick();
+    await h.tick();
+    const sel = (h.window as any).AizenSources.selectFor('what is the mascot?');
+    expect(sel.some((u: any) => /blue otter named Pip/.test(u.text))).toBe(true);
+  });
+});

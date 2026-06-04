@@ -1,7 +1,7 @@
 {
-  "$ref": "#/definitions/entitlement",
+  "$ref": "#/definitions/source_quota_status",
   "definitions": {
-    "entitlement": {
+    "source_quota_status": {
       "type": "object",
       "properties": {
         "tier": {
@@ -13,7 +13,11 @@
             "enterprise"
           ]
         },
-        "max_resources": {
+        "used_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit_bytes": {
           "anyOf": [
             {
               "type": "integer",
@@ -24,16 +28,9 @@
             }
           ]
         },
-        "max_source_bytes": {
-          "anyOf": [
-            {
-              "type": "integer",
-              "minimum": 0
-            },
-            {
-              "type": "null"
-            }
-          ]
+        "count": {
+          "type": "integer",
+          "minimum": 0
         },
         "retention_window_days": {
           "anyOf": [
@@ -46,25 +43,17 @@
             }
           ]
         },
-        "model_tier_cap": {
-          "type": "string",
-          "enum": [
-            "haiku",
-            "sonnet",
-            "opus"
-          ]
-        },
-        "notes": {
-          "type": "string"
+        "exceeded": {
+          "type": "boolean"
         }
       },
       "required": [
         "tier",
-        "max_resources",
-        "max_source_bytes",
+        "used_bytes",
+        "limit_bytes",
+        "count",
         "retention_window_days",
-        "model_tier_cap",
-        "notes"
+        "exceeded"
       ],
       "additionalProperties": false
     }
