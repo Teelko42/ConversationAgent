@@ -7,9 +7,13 @@ import type { TranscriptSegment } from './transcript-segment.js';
 import type { ConsentContext } from './consent.js';
 import type { ConceptCard } from './concept-card.js';
 import type { KgDelta } from './kg.js';
+import type { Account, Identity, SavedSession } from './account.js';
+import type { ExplanationSource } from './sentence-explanation.js';
+import type { UserSource } from './user-source.js';
 
 export const TENANT = '11111111-1111-4111-8111-111111111111';
 export const SESSION = '22222222-2222-4222-8222-222222222222';
+export const ACCOUNT = '33333333-3333-4333-8333-333333333333';
 export const segId = (seq: number) => `${SESSION}:seg:${seq}`;
 
 export function makeTranscriptSegment(
@@ -88,6 +92,68 @@ export function makeConceptCard(over: Partial<ConceptCard> = {}): ConceptCard {
     retraction: null,
     ...over,
   } as ConceptCard;
+}
+
+export function makeAccount(over: Partial<Account> = {}): Account {
+  return {
+    id: ACCOUNT,
+    tier: 'free',
+    workspace_id: ACCOUNT,
+    display_name: 'Local Dev',
+    created_at_us: 1748706943000000,
+    updated_at_us: 1748706943000000,
+    ...over,
+  } as Account;
+}
+
+export function makeIdentity(over: Partial<Identity> = {}): Identity {
+  return {
+    id: '44444444-4444-4444-8444-444444444444',
+    account_id: ACCOUNT,
+    provider: 'stub',
+    provider_subject: 'stub-user',
+    email: 'dev@localhost',
+    display_name: 'Local Dev',
+    created_at_us: 1748706943000000,
+    ...over,
+  } as Identity;
+}
+
+export function makeSavedSession(over: Partial<SavedSession> = {}): SavedSession {
+  return {
+    id: SESSION,
+    account_id: ACCOUNT,
+    title: 'Quarterly review',
+    artifact_count: 1,
+    consent_class: 'standard',
+    pii_present: false,
+    created_at_us: 1748706943000000,
+    updated_at_us: 1748706943000000,
+    expires_at_us: null,
+    ...over,
+  } as SavedSession;
+}
+
+export function makeExplanationSource(over: Partial<ExplanationSource> = {}): ExplanationSource {
+  return {
+    citation_id: 'ct_seg_web_0',
+    type: 'web',
+    url: 'https://example.com/arr',
+    title: 'Investopedia',
+    snippet: 'ARR is annual recurring revenue.',
+    support_score: 0.9,
+    ...over,
+  } as ExplanationSource;
+}
+
+export function makeUserSource(over: Partial<UserSource> = {}): UserSource {
+  return {
+    id: 'us_1',
+    title: 'Q4 launch brief',
+    url: 'https://example.com/brief',
+    text: 'We are discussing the Q4 product launch plan.',
+    ...over,
+  } as UserSource;
 }
 
 export function makeKgDelta(over: Partial<KgDelta> = {}): KgDelta {

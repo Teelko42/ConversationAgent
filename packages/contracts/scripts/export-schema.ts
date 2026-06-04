@@ -22,6 +22,14 @@ import {
   KgResyncRequestSchema,
   ConsentContextSchema,
   ExtractionInputSchema,
+  AccountSchema,
+  IdentitySchema,
+  EntitlementSchema,
+  SavedSessionSchema,
+  StoredArtifactSchema,
+  QuotaStatusSchema,
+  QuotaErrorSchema,
+  UserSourceSchema,
 } from '../src/index.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -40,6 +48,14 @@ const registry: Record<string, unknown> = {
   'kg_resync_request.schema.json': KgResyncRequestSchema,
   'consent_context.schema.json': ConsentContextSchema,
   'extraction_input.schema.json': ExtractionInputSchema,
+  'account.schema.json': AccountSchema,
+  'identity.schema.json': IdentitySchema,
+  'entitlement.schema.json': EntitlementSchema,
+  'saved_session.schema.json': SavedSessionSchema,
+  'stored_artifact.schema.json': StoredArtifactSchema,
+  'quota_status.schema.json': QuotaStatusSchema,
+  'quota_error.schema.json': QuotaErrorSchema,
+  'user_source.schema.json': UserSourceSchema,
 };
 
 for (const [file, schema] of Object.entries(registry)) {

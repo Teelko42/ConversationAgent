@@ -1,0 +1,45 @@
+{
+  "$ref": "#/definitions/stored_artifact",
+  "definitions": {
+    "stored_artifact": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "account_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "transcript_segment",
+            "concept_card",
+            "kg_node",
+            "kg_edge",
+            "insight_item"
+          ]
+        },
+        "payload": {},
+        "created_at_us": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "account_id",
+        "session_id",
+        "kind",
+        "created_at_us"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

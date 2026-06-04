@@ -11,6 +11,9 @@
 node_modules/
 dist/
 *.tsbuildinfo
+
+# Local SQLite store for accounts/resources (created at runtime)
+.data/
 .vitest/
 coverage/
 *.log

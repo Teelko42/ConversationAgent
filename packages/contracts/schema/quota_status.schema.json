@@ -1,0 +1,57 @@
+{
+  "$ref": "#/definitions/quota_status",
+  "definitions": {
+    "quota_status": {
+      "type": "object",
+      "properties": {
+        "tier": {
+          "type": "string",
+          "enum": [
+            "free",
+            "pro",
+            "team",
+            "enterprise"
+          ]
+        },
+        "used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "retention_window_days": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "exceeded": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "tier",
+        "used",
+        "limit",
+        "retention_window_days",
+        "exceeded"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

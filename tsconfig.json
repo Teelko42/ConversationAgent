@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "packages/contracts" },
+    { "path": "packages/accounts" },
     { "path": "packages/adapter-d16" },
     { "path": "packages/seam-supersede" },
     { "path": "packages/seam-kg-resync" },

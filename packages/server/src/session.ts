@@ -27,7 +27,7 @@ import {
 } from '@aizen/llm-gateway';
 import { makeWebSearchProvider, type WebSearchProvider } from '@aizen/research';
 import { explainSentence, answerFollowup } from '@aizen/intel-worker';
-import type { FollowupAnswer, SentenceExplanation } from '@aizen/contracts';
+import type { FollowupAnswer, SentenceExplanation, UserSource } from '@aizen/contracts';
 import {
   StubSttProvider,
   runStt,
@@ -52,10 +52,15 @@ export interface SessionHandle {
   sendAudio(pcm: Uint8Array): void;
   /**
    * On-demand: explain one transcript sentence — plain meaning + a breakdown of
-   * its key words, and (when it is a question) a short web-grounded answer.
-   * Driven by an F03 click, so it runs only for sentences the user picks.
+   * its key words, and (when it is a question) a short answer grounded in web
+   * search and/or the user's own provided sources (F2). Driven by an F03 click, so
+   * it runs only for sentences the user picks.
+   *
+   * `userSources` is the BYO-context the browser ships with the request (F2 §6):
+   * it survives a WS reconnect because the client re-sends it each time, so a
+   * question can be answered from user context even with no web-search key.
    */
-  explain(segmentId: string, text: string): Promise<SentenceExplanation>;
+  explain(segmentId: string, text: string, userSources?: UserSource[]): Promise<SentenceExplanation>;
   /**
    * On-demand: answer a user-typed FOLLOW-UP question about a sentence that was
    * just explained, grounded in the recent transcript context + web sources (F1).
@@ -75,6 +80,7 @@ export interface SessionHandle {
     question: string,
     askId: string,
     clientContext?: { sentence?: string; transcript?: string[] },
+    userSources?: UserSource[],
   ): Promise<FollowupAnswer>;
   stop(): Promise<void>;
 }
@@ -238,12 +244,15 @@ export async function createSession(
     sessionId,
     mode,
     sendAudio: (pcm) => stream?.sendAudio(pcm),
-    explain: (segmentId, text) =>
+    explain: (segmentId, text, userSources) =>
       withTimeout(
         explainSentence(
           { segment_id: segmentId, session_id: sessionId, tenant_id: cfg.tenantId, text },
           gateway,
-          { research: status.search === 'tavily' ? research : undefined },
+          {
+            research: status.search === 'tavily' ? research : undefined,
+            ...(userSources && userSources.length ? { userSources } : {}),
+          },
         ),
         ONDEMAND_TIMEOUT_MS,
         () => ({
@@ -260,7 +269,7 @@ export async function createSession(
           state: 'degraded',
         }),
       ),
-    ask: (segmentId, question, _askId, clientContext) => {
+    ask: (segmentId, question, _askId, clientContext, userSources) => {
       // Prefer the context the client shipped with the ask (its model survives WS
       // reconnects, whereas this session's `recentFinals` starts empty after one).
       // Fall back to the named segment's sentence, then the most recent final line,
@@ -283,7 +292,10 @@ export async function createSession(
             context: { sentence, transcript },
           },
           gateway,
-          { research: status.search === 'tavily' ? research : undefined },
+          {
+            research: status.search === 'tavily' ? research : undefined,
+            ...(userSources && userSources.length ? { userSources } : {}),
+          },
         ),
         ONDEMAND_TIMEOUT_MS,
         () => ({

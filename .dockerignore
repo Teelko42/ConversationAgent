@@ -1,0 +1,15 @@
+# Keep the build context small and never bake local state/secrets into the image.
+node_modules
+**/node_modules
+.git
+.gitignore
+.data
+.env
+.env.*
+!.env.example
+*.log
+.claude
+.vscode
+dist
+**/dist
+*.tsbuildinfo

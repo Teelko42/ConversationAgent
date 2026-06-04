@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@aizen/contracts": "workspace:*",
+    "@aizen/accounts": "workspace:*",
     "@aizen/edge-gateway": "workspace:*",
     "@aizen/capture": "workspace:*",
     "@aizen/stt-worker": "workspace:*",

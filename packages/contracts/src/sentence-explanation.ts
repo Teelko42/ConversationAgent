@@ -23,15 +23,28 @@ export const WordBreakdownSchema = z.object({
 });
 export type WordBreakdown = z.infer<typeof WordBreakdownSchema>;
 
-/** A web source backing a question's answer (INV-1/2: URL required). */
-export const ExplanationSourceSchema = z.object({
-  citation_id: z.string(),
-  type: z.literal('web'),
-  url: z.string(),
-  title: z.string().optional(),
-  snippet: z.string().optional(),
-  support_score: z.number().min(0).max(1).optional(),
-});
+/**
+ * A source backing a question's answer. Two kinds (New_Feature.md F2 §4):
+ *   • `web`  — a retrieved web page. INV-1/2 still holds: a web source MUST carry
+ *              a `url` so F03 can show provenance (enforced by the refine below).
+ *   • `user` — context the user provided (a pasted note / a URL-with-comment). It
+ *              may have no `url`, in which case the UI renders it without a link.
+ * Reused by `FollowupAnswer`, so this one shape covers both engines.
+ */
+export const ExplanationSourceSchema = z
+  .object({
+    citation_id: z.string(),
+    type: z.enum(['web', 'user']),
+    /** Required for `web` (INV-1/2); optional for `user` sources without a link. */
+    url: z.string().optional(),
+    title: z.string().optional(),
+    snippet: z.string().optional(),
+    support_score: z.number().min(0).max(1).optional(),
+  })
+  .refine((s) => s.type !== 'web' || (typeof s.url === 'string' && s.url.length > 0), {
+    message: 'a web source must carry a url (INV-1/2)',
+    path: ['url'],
+  });
 export type ExplanationSource = z.infer<typeof ExplanationSourceSchema>;
 
 export const SentenceExplanationSchema = z.object({

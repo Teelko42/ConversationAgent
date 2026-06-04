@@ -7,6 +7,7 @@
   },
   "references": [
     { "path": "../contracts" },
+    { "path": "../accounts" },
     { "path": "../edge-gateway" },
     { "path": "../capture" },
     { "path": "../stt-worker" },

@@ -9,6 +9,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@aizen/contracts': pkg('@aizen/contracts', 'contracts'),
+      '@aizen/accounts': pkg('@aizen/accounts', 'accounts'),
       '@aizen/adapter-d16': pkg('@aizen/adapter-d16', 'adapter-d16'),
       '@aizen/seam-supersede': pkg('@aizen/seam-supersede', 'seam-supersede'),
       '@aizen/seam-kg-resync': pkg('@aizen/seam-kg-resync', 'seam-kg-resync'),

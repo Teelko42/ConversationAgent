@@ -16,7 +16,13 @@
  * synthesized without sources, so questions never hallucinate from parametric
  * memory alone.
  */
-import type { FollowupAnswer, SentenceExplanation, WordBreakdown } from '@aizen/contracts';
+import type {
+  ExplanationSource,
+  FollowupAnswer,
+  SentenceExplanation,
+  UserSource,
+  WordBreakdown,
+} from '@aizen/contracts';
 import type { LlmGateway } from '@aizen/llm-gateway';
 import type { WebSearchProvider, WebSource } from '@aizen/research';
 
@@ -33,6 +39,13 @@ export interface ExplainOptions {
   research?: WebSearchProvider;
   /** Max web sources to attach. Default 3. */
   maxSources?: number;
+  /**
+   * User-provided context (F2): pasted notes / URLs-with-comments the asker handed
+   * the AI. Folded into the answer prompt as authoritative context and emitted as
+   * `type:'user'` citations. Their presence is enough to answer a question even
+   * with NO web search (no Tavily key) — that's the whole point of BYO sources.
+   */
+  userSources?: UserSource[];
 }
 
 /** What the explain call is asked to return; parsed leniently. */
@@ -72,33 +85,42 @@ export async function explainSentence(
     parsed = fallbackExplain(sentence, res.ok ? res.text : '');
   }
 
-  // 2) Question? → ground a short answer in web sources (best-effort).
+  // 2) Question? → ground a short answer in web sources AND/OR user-provided
+  //    context (best-effort). With user sources present we can answer even when no
+  //    web search is wired (no Tavily key) — that's what makes BYO sources work.
   let answer: string | null = null;
   let sources: SentenceExplanation['sources'] = [];
-  if (parsed.is_question && opts.research) {
-    const query = parsed.search_query.trim() || sentence;
+  if (parsed.is_question) {
+    const userSources = opts.userSources ?? [];
     let webSources: WebSource[] = [];
-    try {
-      const r = await opts.research.search(query, { maxResults: opts.maxSources ?? 3 });
-      webSources = r.sources.filter((s) => s.url);
-    } catch {
-      webSources = [];
+    if (opts.research) {
+      const query = parsed.search_query.trim() || sentence;
+      try {
+        const r = await opts.research.search(query, { maxResults: opts.maxSources ?? 3 });
+        webSources = r.sources.filter((s) => s.url);
+      } catch {
+        webSources = [];
+      }
     }
 
-    if (webSources.length > 0) {
-      sources = webSources.map((s, i) => ({
+    sources = [
+      ...webSources.map((s, i) => ({
         citation_id: `ct_${input.segment_id}_web_${i}`,
         type: 'web' as const,
         url: s.url,
         title: s.title,
         snippet: s.snippet.slice(0, 400),
         support_score: s.score ?? 0.5,
-      }));
+      })),
+      ...userSources.map((u, i) => userCitation(`ct_${input.segment_id}_user_${i}`, u)),
+    ];
 
+    // Answer whenever there is ANY grounding (web OR user) — not web-only.
+    if (webSources.length > 0 || userSources.length > 0) {
       const ans = await gateway.invoke({
         kind: 'enrich',
         tenantId: input.tenant_id,
-        prompt: buildAnswerPrompt(sentence, webSources),
+        prompt: buildAnswerPrompt(sentence, webSources, userSources),
         estOutputTokens: 200,
       });
       if (ans.ok) {
@@ -151,6 +173,11 @@ export interface FollowupOptions {
   research?: WebSearchProvider;
   /** Max web sources to attach. Default 3. */
   maxSources?: number;
+  /**
+   * User-provided context (F2), folded into the follow-up prompt as authoritative
+   * context and emitted as `type:'user'` citations — alongside any web sources.
+   */
+  userSources?: UserSource[];
 }
 
 /**
@@ -179,6 +206,7 @@ export async function answerFollowup(
   // 1) Best-effort web search to ground outside facts with citations. The query
   //    blends the question with the sentence it's about so context-anchored asks
   //    ("how does that compare to X?") retrieve relevant pages.
+  const userSources = opts.userSources ?? [];
   let sources: FollowupAnswer['sources'] = [];
   let webSources: WebSource[] = [];
   if (opts.research) {
@@ -189,24 +217,27 @@ export async function answerFollowup(
     } catch {
       webSources = [];
     }
-    sources = webSources.map((s, i) => ({
+  }
+  sources = [
+    ...webSources.map((s, i) => ({
       citation_id: `ct_${input.segment_id}_fu_${i}`,
       type: 'web' as const,
       url: s.url,
       title: s.title,
       snippet: s.snippet.slice(0, 400),
       support_score: s.score ?? 0.5,
-    }));
-  }
+    })),
+    ...userSources.map((u, i) => userCitation(`ct_${input.segment_id}_user_${i}`, u)),
+  ];
 
-  // 2) Synthesize the answer from conversation context + web sources (one enrich
-  //    hop). The gateway's CostMeter enforces the per-tenant ceiling; a refusal
-  //    (cost cap) returns !ok → degraded, never throws.
+  // 2) Synthesize the answer from conversation context + web + user sources (one
+  //    enrich hop). The gateway's CostMeter enforces the per-tenant ceiling; a
+  //    refusal (cost cap) returns !ok → degraded, never throws.
   let answer: string | null = null;
   const res = await gateway.invoke({
     kind: 'enrich',
     tenantId: input.tenant_id,
-    prompt: buildFollowupPrompt(question, sentence, transcript, webSources),
+    prompt: buildFollowupPrompt(question, sentence, transcript, webSources, userSources),
     estOutputTokens: 250,
   });
   if (res.ok) {
@@ -252,14 +283,29 @@ function buildExplainPrompt(sentence: string): string {
   );
 }
 
-function buildAnswerPrompt(sentence: string, sources: WebSource[]): string {
+function buildAnswerPrompt(sentence: string, sources: WebSource[], userSources: UserSource[] = []): string {
   const block = sources
     .map((s, i) => `[${i + 1}] ${s.title}: ${s.snippet.slice(0, 300)}`)
     .join('\n');
+  // No user sources → byte-for-byte the original web-only grounding prompt
+  // (so behavior with no BYO sources is unchanged).
+  if (userSources.length === 0) {
+    return (
+      `A live conversation asked: "${sentence}"\n\n` +
+      `Use ONLY these web sources to answer. If they do not contain the answer, ` +
+      `reply with exactly "unknown".\n\nSources:\n${block}\n\n` +
+      `Reply with ONLY a JSON object: ` +
+      `{"answer": "<a 1-3 sentence answer grounded in the sources, or \\"unknown\\">"}`
+    );
+  }
+  const webPart = sources.length ? `Web sources:\n${block}\n\n` : '';
   return (
     `A live conversation asked: "${sentence}"\n\n` +
-    `Use ONLY these web sources to answer. If they do not contain the answer, ` +
-    `reply with exactly "unknown".\n\nSources:\n${block}\n\n` +
+    `Use ONLY the sources below — the web sources AND the context the user ` +
+    `provided — to answer. If they do not contain the answer, reply with exactly ` +
+    `"unknown".\n\n` +
+    webPart +
+    `Provided by the user (treat as authoritative context):\n${userSourcesBlock(userSources)}\n\n` +
     `Reply with ONLY a JSON object: ` +
     `{"answer": "<a 1-3 sentence answer grounded in the sources, or \\"unknown\\">"}`
   );
@@ -278,6 +324,7 @@ function buildFollowupPrompt(
   sentence: string,
   transcript: string[],
   sources: WebSource[],
+  userSources: UserSource[] = [],
 ): string {
   const convo = transcript.length
     ? transcript.map((l) => `- ${l}`).join('\n')
@@ -285,6 +332,10 @@ function buildFollowupPrompt(
   const block = sources.length
     ? sources.map((s, i) => `[${i + 1}] ${s.title}: ${s.snippet.slice(0, 300)}`).join('\n')
     : '(no web sources available)';
+  // Appended only when present, so the no-user-sources prompt is unchanged.
+  const userBlock = userSources.length
+    ? `\n\nProvided by the user (treat as authoritative context):\n${userSourcesBlock(userSources)}`
+    : '';
   return (
     `You are helping someone follow up on a live conversation they are listening to.\n\n` +
     `Conversation so far (most recent last):\n${convo}\n\n` +
@@ -295,10 +346,33 @@ function buildFollowupPrompt(
     `explanation"), rely on the conversation context. For outside facts, use the ` +
     `web sources and ground your claims in them. If you genuinely cannot answer ` +
     `from either, reply with exactly "unknown".\n\n` +
-    `Web sources:\n${block}\n\n` +
+    `Web sources:\n${block}${userBlock}\n\n` +
     `Reply with ONLY a JSON object, no prose: ` +
     `{"answer": "<a 1-4 sentence answer grounded in the context/sources, or \\"unknown\\">"}`
   );
+}
+
+/** A user source as a citation (`type:'user'`, url only when the user gave one). */
+function userCitation(citationId: string, u: UserSource): ExplanationSource {
+  return {
+    citation_id: citationId,
+    type: 'user',
+    ...(u.url ? { url: u.url } : {}),
+    ...(u.title ? { title: u.title } : {}),
+    snippet: (u.text ?? '').slice(0, 400),
+    support_score: 0.5,
+  };
+}
+
+/** Render user sources for a prompt block: "[1] Title (url): text…". */
+function userSourcesBlock(userSources: UserSource[]): string {
+  return userSources
+    .map((u, i) => {
+      const label = [u.title, u.url].filter(Boolean).join(' — ');
+      const head = label ? `${label}: ` : '';
+      return `[${i + 1}] ${head}${(u.text ?? '').slice(0, 600)}`;
+    })
+    .join('\n');
 }
 
 // ---------------------------------------------------------------------------

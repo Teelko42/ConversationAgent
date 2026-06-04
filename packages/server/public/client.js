@@ -45,6 +45,30 @@
     cardExplanation: document.getElementById('card-explanation'),
     // Light/dark theme toggle (light is the default).
     themeToggle: document.getElementById('theme-toggle'),
+    // Account widget (sign in/out, identity + tier, quota usage).
+    acctSignin: document.getElementById('acct-signin'),
+    signinBtn: document.getElementById('signin-btn'),
+    acctMenu: document.getElementById('acct-menu'),
+    acctUser: document.getElementById('acct-user'),
+    acctChip: document.getElementById('acct-chip'),
+    acctAvatar: document.getElementById('acct-avatar'),
+    acctName: document.getElementById('acct-name'),
+    acctTier: document.getElementById('acct-tier'),
+    acctPanel: document.getElementById('acct-panel'),
+    acctFullname: document.getElementById('acct-fullname'),
+    acctEmail: document.getElementById('acct-email'),
+    quota: document.getElementById('quota'),
+    quotaText: document.getElementById('quota-text'),
+    quotaFill: document.getElementById('quota-fill'),
+    quotaOver: document.getElementById('quota-over'),
+    saveSessionBtn: document.getElementById('save-session-btn'),
+    acctMsg: document.getElementById('acct-msg'),
+    signoutBtn: document.getElementById('signout-btn'),
+    // Popup/modal (Providers + Settings sidebar tabs).
+    modalOverlay: document.getElementById('modal-overlay'),
+    modalTitle: document.getElementById('modal-title'),
+    modalBody: document.getElementById('modal-body'),
+    modalClose: document.getElementById('modal-close'),
   };
 
   // Free-text transcript filter (set by the top-bar search box). Empty = show all.
@@ -55,8 +79,12 @@
     transcript: new Map(), // segment_id -> latest line {rev, is_final, who, text}
     explanations: new Map(), // segment_id -> {state:'loading'|'done', ex?}
     followups: [], // ordered Q→A thread: {ask_id, segment_id, question, state, answer?, error?}
+    userSources: [], // F2 BYO context: {id, title?, url?, text} — the canonical list
   };
+  let userSourceSeq = 0; // monotonic counter → unique id per added user source
   let mode = 'demo';
+  let currentSessionId = null; // the live session id (from the server status frame)
+  let wsProviderStatus = null; // {stt,llm,search,auth} from the WS status frame
   let selected = null; // segment_id whose explanation is shown in the side panel
   const requested = new Set(); // segment_ids we've already asked the server to explain
   let askSeq = 0; // monotonic counter → unique ask_id per follow-up (match reply→thread)
@@ -102,12 +130,71 @@
     requested.add(id);
     model.explanations.set(id, { state: 'loading' });
     if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'explain', segment_id: id, text }));
+      ws.send(JSON.stringify({ type: 'explain', segment_id: id, text, user_sources: userSourcesForSend() }));
     }
   }
 
+  // ---- F2: BYO user sources (give the AI more to work with) ----------------
+  // `model.userSources` is the canonical list; we ship the active set WITH every
+  // explain/ask request (mirroring the follow-up context), so it survives a WS
+  // reconnect without any server-side session state. Bound the payload client-side
+  // too (server re-bounds it).
+  function userSourcesForSend() {
+    return model.userSources.slice(0, 20).map((u) => {
+      const o = { id: u.id, text: (u.text || '').slice(0, 4096) };
+      if (u.title) o.title = u.title.slice(0, 200);
+      if (u.url) o.url = u.url.slice(0, 2048);
+      return o;
+    });
+  }
+
+  function addUserSource(src) {
+    const text = (src && src.text ? String(src.text) : '').trim();
+    if (!text) return;
+    userSourceSeq += 1;
+    const entry = { id: 'us_' + userSourceSeq, text };
+    if (src.title) entry.title = String(src.title).trim();
+    if (src.url) entry.url = String(src.url).trim();
+    model.userSources.push(entry);
+    refreshFocusData(); // re-render an open Sources popup so the new row shows
+  }
+
+  function removeUserSource(id) {
+    model.userSources = model.userSources.filter((u) => u.id !== id);
+    refreshFocusData();
+  }
+
   // ---- rendering -----------------------------------------------------------
+  // Auto-follow: the transcript (and the follow-up thread) are capped-height
+  // scroll boxes that fill from the top down, so without help the newest content
+  // lands below the fold the moment the box overflows. We keep the latest in view
+  // by snapping to the bottom after a render — but ONLY when the reader was already
+  // at (or near) the bottom. If they've scrolled up to re-read an earlier line,
+  // leave their position alone so new arrivals don't yank them away. Guarded so the
+  // headless DOM harness (no layout engine) and older runtimes are a silent no-op.
+  const STICK_THRESHOLD_PX = 24; // slack so "near the bottom" follows reliably
+
+  function nearBottom(el) {
+    if (!el) return false;
+    const sh = el.scrollHeight || 0;
+    const st = el.scrollTop || 0;
+    const ch = el.clientHeight || 0;
+    return sh - st - ch <= STICK_THRESHOLD_PX;
+  }
+
+  function stickToBottom(el) {
+    if (!el) return;
+    const top = el.scrollHeight || 0;
+    // Instant (not smooth): the transcript can re-render on every partial, and a
+    // queued smooth animation per update reads as jitter — snap straight to the tail.
+    if (typeof el.scrollTo === 'function') el.scrollTo({ top, behavior: 'auto' });
+    else el.scrollTop = top;
+  }
+
   function renderTranscript() {
+    // Capture whether the reader is following the live tail BEFORE rebuilding the
+    // list — clearing innerHTML resets scrollTop, so this must be measured first.
+    const follow = nearBottom(els.transcript);
     els.transcript.innerHTML = '';
     for (const [id, line] of model.transcript) {
       // Top-bar search filters the visible lines by substring (stats stay whole).
@@ -126,6 +213,7 @@
       els.transcript.appendChild(div);
     }
     updateStats();
+    if (follow) stickToBottom(els.transcript); // keep the newest line in view
   }
 
   // Recompute the dashboard stat cards from the live model. Derived purely from
@@ -238,6 +326,31 @@
     renderTranscript();
   });
 
+  // Keep the explanation tab's freshly-produced content in view. The breakdown
+  // panel (#explanation) scrolls internally (capped height, overflow-y:auto),
+  // while the follow-up thread below it grows the page — so "scroll into view"
+  // differs by target:
+  //   'top'      — a new sentence breakdown was rendered; start it at the
+  //                sentence rather than wherever the previous (possibly longer)
+  //                explanation had been scrolled to.
+  //   'followup' — a Q→A was appended; bring the newest exchange into view.
+  // Guarded so an environment without layout/scroll APIs (the headless DOM test
+  // harness) is a silent no-op rather than a throw.
+  function scrollExplanation(where) {
+    if (where === 'followup') {
+      const thread = els.followupThread;
+      const latest = thread && thread.children[thread.children.length - 1];
+      if (latest && typeof latest.scrollIntoView === 'function') {
+        latest.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+      return;
+    }
+    const panel = els.explanation;
+    if (panel && typeof panel.scrollTo === 'function') {
+      panel.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }
+
   function showExplanationLoading(sentence) {
     els.explanation.innerHTML = '';
     const div = document.createElement('div');
@@ -245,6 +358,7 @@
     div.innerHTML = `<p class="sentence"></p><p class="loading">Explaining…</p>`;
     div.querySelector('.sentence').textContent = sentence;
     els.explanation.appendChild(div);
+    scrollExplanation('top');
   }
 
   function renderExplanation(ex) {
@@ -303,6 +417,7 @@
     }
 
     els.explanation.appendChild(div);
+    scrollExplanation('top');
   }
 
   function renderExplainError(segmentId, message) {
@@ -391,6 +506,7 @@
       item.appendChild(a);
       els.followupThread.appendChild(item);
     }
+    if (model.followups.length) scrollExplanation('followup');
   }
 
   // The conversation context a follow-up is answered against, gathered from the
@@ -433,6 +549,7 @@
           ask_id: askId,
           sentence: ctx.sentence,
           transcript: ctx.transcript,
+          user_sources: userSourcesForSend(),
         }),
       );
       // Final safety net: if no answer/error frame ever comes back (a wedged
@@ -485,6 +602,7 @@
     fu.state = 'done';
     fu.answer = answer; // a FollowupAnswer {answer, sources, state, ...}
     renderFollowups();
+    refreshFocusData(); // a follow-up's sources may add to an open Sources popup
   }
 
   function applyAnswerError(askId, message) {
@@ -565,10 +683,13 @@
       }
       if (msg.type === 'status') {
         mode = msg.mode;
+        if (msg.sessionId) currentSessionId = msg.sessionId;
         const p = msg.providers || {};
+        wsProviderStatus = p; // live provider status for the Providers popup
+        // Just the LIVE/DEMO badge — the per-provider breakdown moved into the
+        // Providers popup (click "Providers" in the sidebar).
         const tag = mode === 'live' ? '<span class="live">LIVE</span>' : '<span class="demo">DEMO</span>';
-        els.status.innerHTML =
-          `${tag} · stt: ${p.stt} · explanations: ${p.llm} · search: ${p.search}`;
+        els.status.innerHTML = tag;
         if (mode === 'live') {
           setButtonsEnabled(true);
           els.hint.textContent =
@@ -594,6 +715,7 @@
           renderTranscript(); // inline answer under the line
           if (ex.segment_id === selected) renderExplanation(ex); // full breakdown in panel
           updateFollowupEnabled(); // a sentence is explained → enable follow-ups
+          refreshFocusData(); // new sources may have arrived → refresh an open Sources popup
         }
       } else if (msg.type === 'answer') {
         // F1 reply: a typed follow-up's grounded answer, matched by ask_id.
@@ -900,11 +1022,25 @@
     if (e.key === 'Escape') closeDrawer();
   });
 
-  // Sidebar nav: highlight the clicked item, smooth-scroll to its section, and
-  // collapse the drawer on mobile. data-target is the id of the section to reach.
+  // Sidebar nav: highlight the clicked item and either open an exclusive popup or
+  // (for "Live Session") show the full dashboard, then collapse the drawer on
+  // mobile. data-modal items (Providers / Settings / Transcript / Explanation /
+  // Activity / Sources) open a popup; everything else scrolls to data-target.
   const navItems = document.querySelectorAll('.nav-item');
   navItems.forEach((item) => {
     item.addEventListener('click', (e) => {
+      const modalKind = item.getAttribute('data-modal');
+      if (modalKind) {
+        e.preventDefault();
+        openModal(modalKind);
+        navItems.forEach((n) => n.classList.remove('active'));
+        item.classList.add('active');
+        closeDrawer();
+        return;
+      }
+      // A non-modal item ("Live Session"): keep the whole dashboard in place. If a
+      // focus popup is open, close it first so everything is shown again.
+      closeModal();
       const targetId = item.getAttribute('data-target');
       const target = targetId && document.getElementById(targetId);
       if (target) {
@@ -1064,4 +1200,825 @@
   }
 
   if (els.popout) els.popout.addEventListener('click', popOut);
+
+  // ---- account: sign in / out · identity + tier · quota usage --------------
+  // Layered around the live pipeline: the app boots and runs anonymously exactly
+  // as before; this only lights up the account widget. All element access is
+  // guarded so a missing widget (or no `fetch`) never breaks the core flow.
+  const PROVIDER_LABELS = {
+    stub: 'Continue with a demo account',
+    google: 'Continue with Google',
+    microsoft: 'Continue with Microsoft',
+  };
+  // Current account view (null = anonymous). Drives the save button + quota meter.
+  let account = null;
+  // The full last /api/session response (auth state + provider_status + plans +
+  // quota). The Providers/Settings popups render from this.
+  let sessionInfo = null;
+
+  function show(el, visible) {
+    if (el) el.hidden = !visible;
+  }
+
+  // Two letters for the avatar, from the display name or email.
+  function initials(nameOrEmail) {
+    const s = (nameOrEmail || '').trim();
+    if (!s) return 'AZ';
+    const parts = s.replace(/@.*$/, '').split(/[\s._-]+/).filter(Boolean);
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return s.slice(0, 2).toUpperCase();
+  }
+
+  function setAcctMsg(text, kind) {
+    if (!els.acctMsg) return;
+    if (!text) {
+      show(els.acctMsg, false);
+      return;
+    }
+    els.acctMsg.textContent = text;
+    els.acctMsg.className = 'acct-msg' + (kind ? ' ' + kind : '');
+    show(els.acctMsg, true);
+  }
+
+  // Build the sign-in menu (one button per offered provider). Clicking a provider
+  // navigates to its server login route, which begins the OAuth (or stub) flow.
+  function renderSigninMenu(providers) {
+    if (!els.acctMenu) return;
+    els.acctMenu.innerHTML = '';
+    (providers || ['stub']).forEach((p) => {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-secondary';
+      btn.type = 'button';
+      btn.dataset.provider = p;
+      btn.textContent = PROVIDER_LABELS[p] || ('Sign in with ' + p);
+      btn.addEventListener('click', () => {
+        location.href = '/auth/' + encodeURIComponent(p) + '/login';
+      });
+      els.acctMenu.appendChild(btn);
+    });
+  }
+
+  // Reflect a quota status ({used, limit, exceeded, tier}) on the meter.
+  function renderQuota(q) {
+    if (!q) return;
+    const limitText = q.limit === null || q.limit === undefined ? '∞' : String(q.limit);
+    if (els.quotaText) els.quotaText.textContent = q.used + ' of ' + limitText;
+    if (els.quotaFill) {
+      const pct = q.limit ? Math.min(100, Math.round((q.used / q.limit) * 100)) : 0;
+      els.quotaFill.style.width = pct + '%';
+    }
+    if (els.quota) els.quota.classList.toggle('over', !!q.exceeded);
+    show(els.quotaOver, !!q.exceeded);
+  }
+
+  function renderAccount(state) {
+    account = state && state.authenticated ? state : null;
+    const signedIn = !!account;
+    show(els.acctSignin, !signedIn);
+    show(els.acctUser, signedIn);
+    if (!signedIn) {
+      renderSigninMenu((state && state.providers) || ['stub']);
+      return;
+    }
+    const acc = state.account || {};
+    const id = state.identity || {};
+    const name = id.display_name || acc.display_name || id.email || 'Account';
+    const tier = (acc.tier || 'free').toString();
+    if (els.acctName) els.acctName.textContent = name;
+    if (els.acctFullname) els.acctFullname.textContent = name;
+    if (els.acctEmail) els.acctEmail.textContent = id.email || '';
+    if (els.acctAvatar) els.acctAvatar.textContent = initials(name || id.email);
+    if (els.acctTier) {
+      els.acctTier.textContent = tier.toUpperCase();
+      els.acctTier.className = 'tier-chip tier-' + tier;
+    }
+    renderQuota(state.quota);
+    setAcctMsg('');
+  }
+
+  function bootAccount() {
+    if (typeof fetch !== 'function') return; // older/sandboxed runtime — stay anonymous
+    fetch('/api/session', { headers: { accept: 'application/json' } })
+      .then((r) => (r && r.ok ? r.json() : null))
+      .then((data) => {
+        if (data) {
+          sessionInfo = data;
+          renderAccount(data);
+          // Keep an open Settings/Providers popup fresh after re-fetch (e.g. sign in/out).
+          if (openModalKind) renderOpenModal();
+        }
+      })
+      .catch(() => {
+        /* network/boot error — leave the widget hidden, core flow unaffected */
+      });
+  }
+
+  // Gather the current session's transcript as owned artifacts to persist with the
+  // saved resource (each final line → one transcript_segment artifact).
+  function collectArtifacts() {
+    const out = [];
+    for (const [id, line] of model.transcript) {
+      if (line.is_final && line.text) {
+        out.push({ id: String(id), kind: 'transcript_segment', payload: { text: line.text, who: line.who } });
+      }
+    }
+    return out;
+  }
+
+  function sessionTitle() {
+    for (const line of model.transcript.values()) {
+      if (line.is_final && line.text) return line.text.slice(0, 60);
+    }
+    return 'Live session';
+  }
+
+  function saveSession() {
+    if (!account) return;
+    if (typeof fetch !== 'function') return;
+    if (!currentSessionId) {
+      setAcctMsg('Connect a session first, then save.', 'error');
+      return;
+    }
+    if (els.saveSessionBtn) els.saveSessionBtn.disabled = true;
+    setAcctMsg('Saving…');
+    fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        session_id: currentSessionId,
+        title: sessionTitle(),
+        artifacts: collectArtifacts(),
+      }),
+    })
+      .then((r) => r.json().then((body) => ({ status: r.status, body })))
+      .then(({ status, body }) => {
+        if (status === 201) {
+          renderQuota(body.quota);
+          setAcctMsg('Saved. ' + (body.quota ? body.quota.used + ' of ' + (body.quota.limit ?? '∞') + ' used.' : ''), 'ok');
+        } else if (status === 409) {
+          // Over the tier cap — show the typed, user-legible quota error + state.
+          if (els.quota) els.quota.classList.add('over');
+          show(els.quotaOver, true);
+          if (els.quotaText && body) els.quotaText.textContent = body.used + ' of ' + body.limit;
+          setAcctMsg((body && body.message ? body.message + ' ' : '') + (body && body.remedy ? body.remedy : ''), 'error');
+        } else {
+          setAcctMsg((body && (body.message || body.error)) || 'Could not save the session.', 'error');
+        }
+      })
+      .catch(() => setAcctMsg('Could not save the session — please try again.', 'error'))
+      .finally(() => {
+        if (els.saveSessionBtn) els.saveSessionBtn.disabled = false;
+      });
+  }
+
+  function signOut() {
+    if (typeof fetch !== 'function') return;
+    fetch('/auth/logout', { method: 'POST' })
+      .then(() => {
+        show(els.acctPanel, false);
+        bootAccount(); // re-fetch → renders the anonymous (sign-in) state
+      })
+      .catch(() => {
+        /* leave UI as-is on failure */
+      });
+  }
+
+  // Toggle helpers for the two popovers (sign-in menu / account panel).
+  function togglePanel(panelEl, btnEl) {
+    if (!panelEl) return;
+    const open = panelEl.hidden;
+    show(panelEl, open);
+    if (btnEl) btnEl.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  if (els.signinBtn) els.signinBtn.addEventListener('click', () => togglePanel(els.acctMenu, els.signinBtn));
+  if (els.acctChip) els.acctChip.addEventListener('click', () => togglePanel(els.acctPanel, els.acctChip));
+  if (els.saveSessionBtn) els.saveSessionBtn.addEventListener('click', saveSession);
+  if (els.signoutBtn) els.signoutBtn.addEventListener('click', signOut);
+
+  // Close the open popover when clicking outside the account widget.
+  document.addEventListener('click', (e) => {
+    const acct = document.getElementById('account');
+    if (acct && e.target && e.target.closest && e.target.closest('#account')) return;
+    show(els.acctMenu, false);
+    show(els.acctPanel, false);
+    if (els.signinBtn) els.signinBtn.setAttribute('aria-expanded', 'false');
+    if (els.acctChip) els.acctChip.setAttribute('aria-expanded', 'false');
+  });
+
+  // ---- popups: Providers/Settings + exclusive "focus" views ------------------
+  // The sidebar tabs open the shared modal instead of scrolling. Two kinds:
+  //   • info popups   — Providers (active STT/LLM/search/auth + quota-limits table)
+  //                     and Settings (the signed-in account / sign-in options).
+  //   • focus popups  — Transcript / Explanation / Activity / Sources: show ONLY
+  //                     that one workspace section. For the three live sections we
+  //                     RELOCATE the real card into the modal body (so all live
+  //                     rendering keeps targeting the same elements) and move it
+  //                     back on close; Sources has no card, so it's built fresh.
+  let openModalKind = null; // null | 'providers' | 'settings' | 'transcript' | 'explanation' | 'activity' | 'sources' | 'history'
+
+  // Focus popups that show a live section by relocating its card into the modal.
+  const FOCUS_SECTIONS = {
+    transcript: { id: 'card-transcript', title: 'Transcript' },
+    explanation: { id: 'card-explanation', title: 'Explanation' },
+    activity: { id: 'card-stats', title: 'Activity' },
+  };
+  let focusedNode = null; // the live card currently relocated into the modal
+  let focusHome = null; // { parent, next } to put it back exactly where it was
+
+  function setModalFocus(on) {
+    if (els.modalOverlay) els.modalOverlay.classList.toggle('modal-focus', !!on);
+  }
+
+  // Move a live section into the modal body, remembering where it came from. The
+  // section keeps its identity (same element ids), so renderTranscript /
+  // renderExplanation / updateStats keep updating it in its new home.
+  function moveFocusInto(sectionId, dest) {
+    const node = document.getElementById(sectionId);
+    if (!node || !dest) return;
+    focusedNode = node;
+    focusHome = { parent: node.parentNode, next: node.nextSibling };
+    dest.appendChild(node);
+  }
+
+  // Put a relocated section back in the dashboard. MUST run before the modal body
+  // is wiped (clearing innerHTML would otherwise orphan the live card).
+  function restoreFocusNode() {
+    if (focusedNode && focusHome && focusHome.parent) {
+      focusHome.parent.insertBefore(focusedNode, focusHome.next || null);
+    }
+    focusedNode = null;
+    focusHome = null;
+  }
+
+  // Re-render an open data-derived focus popup (Sources) when its data changes.
+  // The live-card focus views (Transcript/Explanation/Activity) update themselves.
+  function refreshFocusData() {
+    if (openModalKind === 'sources') renderOpenModal();
+  }
+
+  // Small DOM builder: mk('div', 'cls', 'text').
+  function mk(tag, cls, text) {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  function tierName(t) {
+    const s = String(t || '');
+    return s ? s.charAt(0).toUpperCase() + s.slice(1) : '—';
+  }
+  function fmtCap(n) {
+    return n === null || n === undefined ? 'Custom' : String(n);
+  }
+  function fmtRetention(days) {
+    if (days === null || days === undefined) return 'Custom';
+    if (days <= 14) return days + (days === 1 ? ' day' : ' days');
+    const months = Math.round(days / 30);
+    if (months % 12 === 0) {
+      const y = months / 12;
+      return y + (y === 1 ? ' year' : ' years');
+    }
+    return months + ' months';
+  }
+  function fmtModels(tierCap) {
+    return tierCap === 'haiku' ? 'Haiku only' : 'Sonnet + Opus';
+  }
+  function authLabel(a) {
+    if (a === 'google+microsoft') return 'Google or Microsoft';
+    if (a === 'google') return 'Google';
+    if (a === 'microsoft') return 'Microsoft';
+    return 'a demo account';
+  }
+
+  // The active STT/LLM/search/auth status: prefer the server's /api/session
+  // snapshot, fall back to the live WS status frame.
+  function providerStatus() {
+    return (sessionInfo && sessionInfo.provider_status) || wsProviderStatus || {};
+  }
+
+  function buildProvidersBody() {
+    const ps = providerStatus();
+    const body = mk('div', 'modal-content');
+
+    const defs = [
+      { icon: '🎙', name: 'Speech-to-text', on: ps.stt === 'deepgram',
+        onText: 'Deepgram — live transcription of your mic & computer audio.',
+        offText: 'Stub — a canned demo clip drives the transcript.', onBadge: 'Live', offBadge: 'Demo', offCls: 'demo' },
+      { icon: '✨', name: 'Explanations', on: ps.llm === 'anthropic',
+        onText: 'Anthropic Claude — plain-language explanations & answers.',
+        offText: 'Stub — canned demo replies (add ANTHROPIC_API_KEY).', onBadge: 'Live', offBadge: 'Demo', offCls: 'demo' },
+      { icon: '🔎', name: 'Web search', on: ps.search === 'tavily',
+        onText: 'Tavily — answers grounded in cited web sources.',
+        offText: 'Off — answers rely on the model alone (add TAVILY_API_KEY).', onBadge: 'On', offBadge: 'Off', offCls: '' },
+      { icon: '🔐', name: 'Sign-in', on: !!(ps.auth && ps.auth !== 'stub'),
+        onText: 'OAuth — sign in with ' + authLabel(ps.auth) + '.',
+        offText: 'Demo accounts — no OAuth keys set (stub provider).', onBadge: 'OAuth', offBadge: 'Demo', offCls: 'demo' },
+    ];
+
+    const list = mk('div', 'prov-list');
+    defs.forEach((d) => {
+      const row = mk('div', 'prov-row');
+      row.appendChild(mk('span', 'prov-ico', d.icon));
+      const main = mk('div', 'prov-main');
+      main.appendChild(mk('div', 'prov-name', d.name));
+      main.appendChild(mk('p', 'prov-desc', d.on ? d.onText : d.offText));
+      row.appendChild(main);
+      const badge = mk('span', 'prov-badge' + (d.on ? ' on' : d.offCls ? ' ' + d.offCls : ''), d.on ? d.onBadge : d.offBadge);
+      row.appendChild(badge);
+      list.appendChild(row);
+    });
+    body.appendChild(list);
+
+    // Plan / quota-limits table.
+    const plans = (sessionInfo && sessionInfo.plans) || [];
+    if (plans.length) {
+      body.appendChild(mk('p', 'modal-section-label', 'Plan quota limits'));
+      const table = mk('table', 'plan-table');
+      const thead = mk('thead');
+      const htr = mk('tr');
+      ['Plan', 'Saved sessions', 'Retention', 'AI models'].forEach((h) => htr.appendChild(mk('th', null, h)));
+      thead.appendChild(htr);
+      table.appendChild(thead);
+      const tbody = mk('tbody');
+      const currentTier = sessionInfo && sessionInfo.account && sessionInfo.account.tier;
+      plans.forEach((p) => {
+        const tr = mk('tr', p.tier === currentTier ? 'current' : null);
+        const nameTd = mk('td', null, tierName(p.tier));
+        if (p.tier === currentTier) nameTd.appendChild(mk('span', 'plan-current-tag', 'You'));
+        tr.appendChild(nameTd);
+        tr.appendChild(mk('td', 'plan-cap', fmtCap(p.max_resources)));
+        tr.appendChild(mk('td', null, fmtRetention(p.retention_window_days)));
+        tr.appendChild(mk('td', null, fmtModels(p.model_tier_cap)));
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      body.appendChild(table);
+    }
+    return body;
+  }
+
+  function buildSettingsBody() {
+    const body = mk('div', 'modal-content');
+
+    if (!account) {
+      const wrap = mk('div', 'set-anon');
+      wrap.appendChild(mk('p', null, "You're browsing anonymously. Sign in to save sessions and get a tier-gated quota."));
+      const providers = (sessionInfo && sessionInfo.providers) || ['stub'];
+      providers.forEach((p) => {
+        const btn = mk('button', 'btn btn-primary', PROVIDER_LABELS[p] || ('Sign in with ' + p));
+        btn.type = 'button';
+        btn.addEventListener('click', () => {
+          location.href = '/auth/' + encodeURIComponent(p) + '/login';
+        });
+        wrap.appendChild(btn);
+      });
+      body.appendChild(wrap);
+      return body;
+    }
+
+    const acc = (sessionInfo && sessionInfo.account) || {};
+    const id = (sessionInfo && sessionInfo.identity) || {};
+    const q = (sessionInfo && sessionInfo.quota) || {};
+    const name = id.display_name || acc.display_name || id.email || 'Account';
+
+    const idRow = mk('div', 'set-id');
+    idRow.appendChild(mk('span', 'set-avatar', initials(name || id.email)));
+    const idMain = mk('div', 'set-id-main');
+    idMain.appendChild(mk('div', 'set-id-name', name));
+    idMain.appendChild(mk('div', 'set-id-sub', (id.email || '') + (id.provider ? '  ·  via ' + id.provider : '')));
+    idRow.appendChild(idMain);
+    body.appendChild(idRow);
+
+    const grid = mk('div', 'set-grid');
+    const cell = (label, value) => {
+      const c = mk('div', 'set-cell');
+      c.appendChild(mk('div', 'set-cell-label', label));
+      c.appendChild(mk('div', 'set-cell-value', value));
+      return c;
+    };
+    const limitText = q.limit === null || q.limit === undefined ? '∞' : String(q.limit);
+    grid.appendChild(cell('Plan', tierName(acc.tier)));
+    grid.appendChild(cell('Saved sessions', (q.used != null ? q.used : 0) + ' of ' + limitText));
+    grid.appendChild(cell('Retention', fmtRetention(q.retention_window_days)));
+    grid.appendChild(cell('Sign-in', id.provider ? tierName(id.provider) : '—'));
+    body.appendChild(grid);
+
+    if (q.exceeded) {
+      body.appendChild(mk('p', 'quota-over', "You've reached your plan's saved-session limit. Delete a saved session or upgrade for more."));
+    }
+
+    const actions = mk('div', 'set-actions');
+    const saveBtn = mk('button', 'btn btn-primary', 'Save this session');
+    saveBtn.type = 'button';
+    saveBtn.addEventListener('click', () => {
+      saveSession();
+    });
+    const outBtn = mk('button', 'btn btn-secondary', 'Sign out');
+    outBtn.type = 'button';
+    outBtn.addEventListener('click', () => {
+      closeModal();
+      signOut();
+    });
+    actions.appendChild(saveBtn);
+    actions.appendChild(outBtn);
+    body.appendChild(actions);
+    return body;
+  }
+
+  // Every web source cited this session, gathered from explanation answers and
+  // follow-up answers, de-duplicated by URL (newest sentence/question kept as the
+  // "where it came from" context). Drives the Sources focus popup.
+  function collectAllSources() {
+    const seen = new Set();
+    const out = [];
+    const add = (s, ctx) => {
+      if (!s || !s.url || seen.has(s.url)) return;
+      seen.add(s.url);
+      out.push({ url: s.url, title: s.title || s.url, context: ctx });
+    };
+    for (const st of model.explanations.values()) {
+      if (st.state === 'done' && st.ex && st.ex.sources) {
+        st.ex.sources.forEach((s) => add(s, st.ex.sentence || ''));
+      }
+    }
+    for (const fu of model.followups) {
+      if (fu.answer && fu.answer.sources) fu.answer.sources.forEach((s) => add(s, fu.question || ''));
+    }
+    return out;
+  }
+
+  // Build the "Your sources" section: an add form (text + optional title/URL) and
+  // a removable row per source the user has provided. Re-rendered on add/remove.
+  function buildUserSourcesSection() {
+    const wrap = mk('div', 'usrc-section');
+    const count = model.userSources.length;
+    wrap.appendChild(
+      mk('p', 'modal-section-label', 'Your sources' + (count ? ' (' + count + ')' : '')),
+    );
+    wrap.appendChild(
+      mk('p', 'sources-hint',
+        'Hand the AI a note, brief, or a URL with a comment. Answers are grounded in ' +
+        'these — even with web search off.'),
+    );
+
+    const form = mk('div', 'usrc-form');
+    const titleInput = document.createElement('input');
+    titleInput.className = 'usrc-input';
+    titleInput.type = 'text';
+    titleInput.placeholder = 'Title (optional)';
+    const urlInput = document.createElement('input');
+    urlInput.className = 'usrc-input';
+    urlInput.type = 'text';
+    urlInput.placeholder = 'URL (optional)';
+    const textInput = document.createElement('textarea');
+    textInput.className = 'usrc-textarea';
+    textInput.placeholder = 'Paste a note, brief, or context the AI should use…';
+    const addBtn = mk('button', 'btn btn-primary usrc-add', 'Add source');
+    addBtn.type = 'button';
+    addBtn.addEventListener('click', () => {
+      addUserSource({ title: titleInput.value, url: urlInput.value, text: textInput.value });
+    });
+    form.appendChild(titleInput);
+    form.appendChild(urlInput);
+    form.appendChild(textInput);
+    form.appendChild(addBtn);
+    wrap.appendChild(form);
+
+    if (count) {
+      const ulist = mk('div', 'usrc-list');
+      model.userSources.forEach((u) => {
+        const row = mk('div', 'usrc-item');
+        const main = mk('div', 'usrc-main');
+        if (u.title) main.appendChild(mk('div', 'usrc-title', u.title));
+        if (u.url) {
+          const a = document.createElement('a');
+          a.className = 'usrc-url';
+          a.href = u.url;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          a.textContent = u.url;
+          main.appendChild(a);
+        }
+        main.appendChild(mk('p', 'usrc-text', u.text));
+        row.appendChild(main);
+        const rm = mk('button', 'usrc-remove', '✕');
+        rm.type = 'button';
+        rm.title = 'Remove source';
+        rm.addEventListener('click', () => removeUserSource(u.id));
+        row.appendChild(rm);
+        ulist.appendChild(row);
+      });
+      wrap.appendChild(ulist);
+    }
+    return wrap;
+  }
+
+  function buildSourcesBody() {
+    const body = mk('div', 'modal-content');
+
+    // "Your sources" (user-provided context) sits above the cited-web list.
+    body.appendChild(buildUserSourcesSection());
+
+    // "Cited sources" — the web pages grounded answers have cited this session.
+    const sources = collectAllSources();
+    if (!sources.length) {
+      body.appendChild(
+        mk('p', 'sources-empty',
+          'No web sources cited yet. Ask a question during a live session — grounded ' +
+          'answers list the web pages they cite, and they all collect here.'),
+      );
+      return body;
+    }
+    body.appendChild(
+      mk('p', 'modal-section-label', sources.length + (sources.length === 1 ? ' cited source' : ' cited sources')),
+    );
+    const list = mk('div', 'src-list');
+    sources.forEach((s) => {
+      const row = mk('div', 'src-item');
+      const a = document.createElement('a');
+      a.className = 'src-link';
+      a.href = s.url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = s.title;
+      row.appendChild(a);
+      try {
+        row.appendChild(mk('span', 'src-host', new URL(s.url).hostname.replace(/^www\./, '')));
+      } catch (e) {
+        /* non-absolute/odd URL or no URL ctor — just omit the host chip */
+      }
+      if (s.context) row.appendChild(mk('p', 'src-ctx', s.context));
+      list.appendChild(row);
+    });
+    body.appendChild(list);
+    return body;
+  }
+
+  // ---- F1: Saved-session history (the "Saved sessions" popup) --------------
+  // A signed-in user browses the sessions they've saved, opens one to read its
+  // transcript back (read-only — separate, inert from the live view), or deletes
+  // one to free a quota slot. This is the read/browse half of the account system;
+  // the save half already ships. Anonymous users see a sign-in prompt, never
+  // another account's data (the backend is account-scoped, so it's enforced
+  // server-side regardless).
+
+  // A short relative "when" from a microsecond epoch (created_at_us).
+  function relTime(us) {
+    if (!us) return '';
+    const diffMs = Math.max(0, Date.now() - us / 1000);
+    const sec = Math.round(diffMs / 1000);
+    if (sec < 60) return 'just now';
+    const min = Math.round(sec / 60);
+    if (min < 60) return min + (min === 1 ? ' minute ago' : ' minutes ago');
+    const hr = Math.round(min / 60);
+    if (hr < 24) return hr + (hr === 1 ? ' hour ago' : ' hours ago');
+    const day = Math.round(hr / 24);
+    if (day < 30) return day + (day === 1 ? ' day ago' : ' days ago');
+    const mon = Math.round(day / 30);
+    if (mon < 12) return mon + (mon === 1 ? ' month ago' : ' months ago');
+    const yr = Math.round(mon / 12);
+    return yr + (yr === 1 ? ' year ago' : ' years ago');
+  }
+
+  // Build the History popup body synchronously (like buildSourcesBody), then fill
+  // it from GET /api/sessions. Anonymous → a sign-in prompt instead.
+  function buildHistoryBody() {
+    const body = mk('div', 'modal-content');
+    if (!account) {
+      const wrap = mk('div', 'set-anon');
+      wrap.appendChild(mk('p', null, 'Sign in to save sessions and revisit them here.'));
+      const providers = (sessionInfo && sessionInfo.providers) || ['stub'];
+      providers.forEach((p) => {
+        const btn = mk('button', 'btn btn-primary', PROVIDER_LABELS[p] || ('Sign in with ' + p));
+        btn.type = 'button';
+        btn.addEventListener('click', () => {
+          location.href = '/auth/' + encodeURIComponent(p) + '/login';
+        });
+        wrap.appendChild(btn);
+      });
+      body.appendChild(wrap);
+      return body;
+    }
+    fillHistory(body);
+    return body;
+  }
+
+  // (Re)load the saved-session list into `body`. Guarded against races: a late
+  // response is dropped if the user has switched away from the History popup.
+  function fillHistory(body) {
+    body.innerHTML = '';
+    body.appendChild(mk('p', 'sources-empty', 'Loading your saved sessions…'));
+    if (typeof fetch !== 'function') return;
+    fetch('/api/sessions', { headers: { accept: 'application/json' } })
+      .then((r) => (r && r.ok ? r.json() : null))
+      .then((data) => {
+        if (openModalKind !== 'history') return; // user switched popups
+        renderHistoryList(body, data);
+      })
+      .catch(() => {
+        if (openModalKind !== 'history') return;
+        body.innerHTML = '';
+        body.appendChild(mk('p', 'sources-empty', 'Could not load your saved sessions.'));
+      });
+  }
+
+  function renderHistoryList(body, data) {
+    body.innerHTML = '';
+    if (data && data.quota) renderQuota(data.quota); // keep the account meter in sync
+    const sessions = ((data && data.sessions) || []).slice().sort(
+      (a, b) => (b.created_at_us || 0) - (a.created_at_us || 0), // newest-first
+    );
+    if (!sessions.length) {
+      body.appendChild(mk('p', 'sources-empty', 'No saved sessions yet — save one from your account menu.'));
+      return;
+    }
+    body.appendChild(
+      mk('p', 'modal-section-label', sessions.length + (sessions.length === 1 ? ' saved session' : ' saved sessions')),
+    );
+    const list = mk('div', 'hist-list');
+    sessions.forEach((s) => list.appendChild(historyRow(body, s)));
+    body.appendChild(list);
+  }
+
+  function historyRow(body, session) {
+    const row = mk('div', 'hist-item');
+    const main = mk('div', 'hist-main');
+    main.appendChild(mk('div', 'hist-title', session.title || 'Untitled session'));
+    const meta = mk('div', 'hist-meta');
+    meta.appendChild(mk('span', 'hist-when', relTime(session.created_at_us)));
+    const n = session.artifact_count || 0;
+    meta.appendChild(mk('span', 'hist-size', n + (n === 1 ? ' line' : ' lines')));
+    if (session.consent_class === 'sensitive') {
+      meta.appendChild(mk('span', 'hist-chip sensitive', 'Sensitive'));
+    }
+    main.appendChild(meta);
+    row.appendChild(main);
+
+    const actions = mk('div', 'hist-actions');
+    const openBtn = mk('button', 'btn btn-secondary hist-open', 'Open');
+    openBtn.type = 'button';
+    openBtn.addEventListener('click', () => openSavedSession(body, session.id));
+    actions.appendChild(openBtn);
+    const delBtn = mk('button', 'btn btn-secondary hist-del', 'Delete');
+    delBtn.type = 'button';
+    delBtn.addEventListener('click', () => confirmDeleteSession(session, row, actions, body));
+    actions.appendChild(delBtn);
+    row.appendChild(actions);
+    return row;
+  }
+
+  // Inline confirm (no window.confirm, which is disallowed here): swap the row's
+  // actions for a "Delete?" affordance with confirm/cancel.
+  function confirmDeleteSession(session, row, actions, body) {
+    actions.innerHTML = '';
+    actions.appendChild(mk('span', 'hist-confirm', 'Delete?'));
+    const yes = mk('button', 'btn btn-danger hist-del-yes', 'Delete');
+    yes.type = 'button';
+    yes.addEventListener('click', () => deleteSavedSession(body, session.id));
+    const no = mk('button', 'btn btn-secondary hist-del-no', 'Cancel');
+    no.type = 'button';
+    no.addEventListener('click', () => fillHistory(body)); // re-render restores the row
+    actions.appendChild(yes);
+    actions.appendChild(no);
+  }
+
+  function deleteSavedSession(body, id) {
+    if (typeof fetch !== 'function') return;
+    fetch('/api/sessions/' + encodeURIComponent(id), { method: 'DELETE' })
+      .then((r) => (r && r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && data.quota) renderQuota(data.quota); // freed a slot → meter updates
+        if (openModalKind === 'history') fillHistory(body);
+      })
+      .catch(() => {
+        if (openModalKind === 'history') fillHistory(body);
+      });
+  }
+
+  // Show an error state inside the History popup with a Back affordance, instead
+  // of silently leaving the list unchanged. A silent no-op here is what makes a
+  // failed Open look like a dead button (e.g. a stale server with no
+  // /api/sessions/:id route returns 404) — always give the user feedback + a way out.
+  function renderHistoryError(body, message) {
+    body.innerHTML = '';
+    const back = mk('button', 'btn btn-secondary hist-back', '← Back to saved sessions');
+    back.type = 'button';
+    back.addEventListener('click', () => fillHistory(body));
+    body.appendChild(back);
+    body.appendChild(mk('p', 'sources-empty', message));
+  }
+
+  function openSavedSession(body, id) {
+    if (typeof fetch !== 'function') return;
+    fetch('/api/sessions/' + encodeURIComponent(id), { headers: { accept: 'application/json' } })
+      .then((r) => (r && r.ok ? r.json() : null))
+      .then((data) => {
+        if (openModalKind !== 'history') return; // user switched popups — drop it
+        if (!data || !data.session) {
+          renderHistoryError(body, 'Could not open this saved session — please try again.');
+          return;
+        }
+        renderSavedSession(body, data.session, data.artifacts || []);
+      })
+      .catch(() => {
+        if (openModalKind === 'history') {
+          renderHistoryError(body, 'Could not open this saved session — please try again.');
+        }
+      });
+  }
+
+  // Render ONE saved session read-only: its transcript rebuilt from the stored
+  // transcript_segment artifacts. This is inert — it never touches the live model,
+  // the WebSocket, or the live transcript DOM (F1 §5).
+  function renderSavedSession(body, session, artifacts) {
+    body.innerHTML = '';
+    const back = mk('button', 'btn btn-secondary hist-back', '← Back to saved sessions');
+    back.type = 'button';
+    back.addEventListener('click', () => fillHistory(body));
+    body.appendChild(back);
+
+    body.appendChild(mk('h3', 'hist-detail-title', session.title || 'Untitled session'));
+    const n = session.artifact_count || 0;
+    const metaText =
+      relTime(session.created_at_us) + ' · ' + n + (n === 1 ? ' line' : ' lines') +
+      (session.consent_class === 'sensitive' ? ' · Sensitive' : '');
+    body.appendChild(mk('p', 'hist-detail-meta', metaText));
+
+    const segs = (artifacts || []).filter((a) => a && a.kind === 'transcript_segment');
+    if (!segs.length) {
+      body.appendChild(mk('p', 'sources-empty', 'This saved session has no transcript lines.'));
+      return;
+    }
+    const stream = mk('div', 'hist-transcript');
+    segs.forEach((a) => {
+      const p = a.payload || {};
+      const line = mk('div', 'line final');
+      line.appendChild(mk('span', 'who', (p.who || 'Speaker') + ':'));
+      line.appendChild(mk('span', 'txt', ' ' + (p.text || '')));
+      stream.appendChild(line);
+    });
+    body.appendChild(stream);
+  }
+
+  function renderOpenModal() {
+    if (!els.modalBody || !els.modalTitle) return;
+    // Salvage any relocated live card BEFORE wiping the body (innerHTML='' would
+    // orphan it), so switching directly between focus popups never strands a node.
+    restoreFocusNode();
+    els.modalBody.innerHTML = '';
+    setModalFocus(false);
+    if (openModalKind === 'providers') {
+      els.modalTitle.textContent = 'Providers & plan limits';
+      els.modalBody.appendChild(buildProvidersBody());
+    } else if (openModalKind === 'settings') {
+      els.modalTitle.textContent = 'Account';
+      els.modalBody.appendChild(buildSettingsBody());
+    } else if (FOCUS_SECTIONS[openModalKind]) {
+      const def = FOCUS_SECTIONS[openModalKind];
+      els.modalTitle.textContent = def.title;
+      setModalFocus(true);
+      moveFocusInto(def.id, els.modalBody); // relocate the live card; stays live
+    } else if (openModalKind === 'sources') {
+      els.modalTitle.textContent = 'Sources';
+      setModalFocus(true);
+      els.modalBody.appendChild(buildSourcesBody());
+    } else if (openModalKind === 'history') {
+      els.modalTitle.textContent = 'Saved sessions';
+      setModalFocus(true);
+      els.modalBody.appendChild(buildHistoryBody());
+    }
+  }
+
+  function openModal(kind) {
+    openModalKind = kind;
+    renderOpenModal();
+    show(els.modalOverlay, true);
+  }
+  function closeModal() {
+    openModalKind = null;
+    restoreFocusNode(); // put any relocated live card back in the dashboard
+    if (els.modalBody) els.modalBody.innerHTML = '';
+    setModalFocus(false);
+    show(els.modalOverlay, false);
+    // Back to the full dashboard → reflect that as the active ("Live Session") tab.
+    const live = document.querySelector('[data-view="live"]');
+    if (live) {
+      document.querySelectorAll('.nav-item').forEach((n) => n.classList.remove('active'));
+      live.classList.add('active');
+    }
+  }
+
+  if (els.modalClose) els.modalClose.addEventListener('click', closeModal);
+  if (els.modalOverlay) {
+    els.modalOverlay.addEventListener('click', (e) => {
+      if (e.target === els.modalOverlay) closeModal(); // backdrop click only
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && openModalKind) closeModal();
+  });
+
+  bootAccount();
 })();

@@ -17,6 +17,7 @@
 import WebSocket from 'ws';
 import { listen } from '@deepgram/sdk';
 import type { TranscriptSegment } from '@aizen/contracts';
+import { diarizeWords, type DiarWord } from './diarization.js';
 import type {
   SegmentSink,
   StreamingSttConfig,
@@ -68,6 +69,13 @@ export interface DeepgramProviderOptions {
    * window. Default 5000. Set to 0 to disable the heartbeat.
    */
   keepAliveMs?: number;
+  /**
+   * Value stamped on `speaker.diarization_method` (Speaker_Research.md §9.4).
+   * This provider is single-channel Deepgram online clustering → `deepgram_online`.
+   * A per-track/channel ingest path would set `per_channel`; an offline-refinement
+   * pass would supersede live segments with a `*_offline_refined` method.
+   */
+  diarizationMethod?: string;
 }
 
 /** Deepgram live endpoint host (overridable only via the injected factory). */
@@ -183,20 +191,22 @@ export class DeepgramSttProvider implements StreamingSttProvider {
   private readonly connect: SocketFactory;
   private readonly model: string;
   private readonly keepAliveMs: number;
+  private readonly diarizationMethod: string;
 
   constructor(opts: DeepgramProviderOptions) {
     if (!opts.apiKey && !opts.connect) {
       throw new Error('DeepgramSttProvider: apiKey (or a connect factory) is required');
     }
-    this.model = opts.model ?? 'nova-2';
+    this.model = opts.model ?? 'nova-3';
     this.connect = opts.connect ?? defaultConnect(opts);
     this.keepAliveMs = opts.keepAliveMs ?? 5000;
+    this.diarizationMethod = opts.diarizationMethod ?? 'deepgram_online';
   }
 
   async open(cfg: StreamingSttConfig, onSegment: SegmentSink): Promise<StreamingSttSession> {
     const full = { ...cfg, language: cfg.language ?? 'en-US', model: cfg.model ?? this.model };
     const socket = await this.connect(full);
-    const mapper = new UtteranceMapper(full, onSegment);
+    const mapper = new UtteranceMapper(full, onSegment, this.diarizationMethod);
 
     // KeepAlive heartbeat. A live session's Deepgram socket is opened ONCE and
     // reused for every start/stop of the browser mic. During a recording pause the
@@ -263,6 +273,7 @@ class UtteranceMapper {
   private uttIndex = 0;
   private rev = 0;
   private committed = ''; // finalized text accrued within the current utterance
+  private committedWords: DiarWord[] = []; // diarized words accrued across is_final pieces
   private uttStartMs: number | null = null;
   private lastEndMs = 0;
   private open = false; // a partial has been emitted but not yet finalized
@@ -271,6 +282,7 @@ class UtteranceMapper {
   constructor(
     private readonly cfg: StreamingSttConfig & { language: string },
     private readonly emit: SegmentSink,
+    private readonly diarizationMethod: string,
   ) {}
 
   private segId(): string {
@@ -282,16 +294,20 @@ class UtteranceMapper {
     const piece = (alt?.transcript ?? '').trim();
     const startMs = Math.max(0, Math.round((msg.start ?? 0) * 1000));
     const endMs = Math.max(startMs, Math.round(((msg.start ?? 0) + (msg.duration ?? 0)) * 1000));
+    const msgWords = (alt?.words ?? []) as DiarWord[];
 
     if (piece && this.uttStartMs === null) this.uttStartMs = startMs;
     this.lastEndMs = endMs;
 
     if (msg.is_final && piece) {
       this.committed = this.committed ? `${this.committed} ${piece}` : piece;
+      // Accrue per-word diarization across is_final pieces so the FINAL carries the
+      // whole utterance's words, not just the last chunk's (§9.1 word-level fix).
+      if (msgWords.length) this.committedWords.push(...msgWords);
     }
 
     if (msg.speech_final) {
-      this.finalize(alt);
+      this.finalize(alt?.confidence);
       return;
     }
 
@@ -301,28 +317,32 @@ class UtteranceMapper {
       : this.committed
         ? `${this.committed} ${piece}`
         : piece;
+    // A committed (is_final) partial already has its words in committedWords; an
+    // interim partial appends the live (uncommitted) words best-effort.
+    const words = msg.is_final ? this.committedWords : [...this.committedWords, ...msgWords];
     this.open = true;
-    this.emitSegment(false, text, alt);
+    this.emitSegment(false, text, words, alt?.confidence);
   }
 
   /** Backup endpoint: Deepgram's UtteranceEnd fires after `utterance_end_ms` silence. */
   onUtteranceEnd(): void {
-    if (this.open || this.committed) this.finalize(undefined);
+    if (this.open || this.committed) this.finalize();
   }
 
   /** Caller-driven flush (session closing): finalize any in-flight utterance. */
   flush(): void {
-    if (this.open || this.committed) this.finalize(undefined);
+    if (this.open || this.committed) this.finalize();
   }
 
-  private finalize(alt: DgResults['channel']['alternatives'][number] | undefined): void {
+  private finalize(confidence?: number): void {
     if (!this.committed && !this.open) return;
     const text = this.committed || '';
-    if (text) this.emitSegment(true, text, alt);
+    if (text) this.emitSegment(true, text, this.committedWords, confidence);
     // reset for the next utterance
     this.uttIndex += 1;
     this.rev = 0;
     this.committed = '';
+    this.committedWords = [];
     this.uttStartMs = null;
     this.open = false;
   }
@@ -330,10 +350,14 @@ class UtteranceMapper {
   private emitSegment(
     isFinal: boolean,
     text: string,
-    alt: DgResults['channel']['alternatives'][number] | undefined,
+    dgWords: readonly DiarWord[],
+    confidence?: number,
   ): void {
     this.rev += 1;
-    const speakerIdx = alt?.words?.find((w) => w.speaker !== undefined)?.speaker ?? 0;
+    // §9.1/§9.4: derive per-word attribution AND the segment speaker from ALL the
+    // words (duration-weighted majority) — not just the first word — and derive
+    // speaker_confidence + is_overlap instead of hardcoding them.
+    const diar = diarizeWords(dgWords);
     const seg: TranscriptSegment = {
       schema_version: '1.0.0',
       tenant_id: this.cfg.tenant_id,
@@ -351,16 +375,17 @@ class UtteranceMapper {
       session_start_at: this.sessionStartAtUs,
       text,
       language: this.cfg.language,
-      confidence: alt?.confidence ?? (isFinal ? 0.9 : 0.6),
+      confidence: confidence ?? (isFinal ? 0.9 : 0.6),
       confidence_band: isFinal ? 'high' : 'medium',
+      words: diar.words.length ? diar.words : undefined,
       speaker: {
-        speaker_id: `spk_${speakerIdx + 1}`,
-        speaker_confidence: 0.8,
+        speaker_id: diar.speaker_id,
+        speaker_confidence: diar.speaker_confidence,
         participant_id: null,
-        display_name: `Speaker ${speakerIdx + 1}`,
+        display_name: diar.display_name,
         channel_role: 'local_participant',
-        is_overlap: false,
-        diarization_method: 'online_clustering',
+        is_overlap: diar.is_overlap,
+        diarization_method: this.diarizationMethod,
       },
       consent: {
         mode: this.cfg.consentMode ?? 'store_audio',

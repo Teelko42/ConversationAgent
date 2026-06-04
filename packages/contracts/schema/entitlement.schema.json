@@ -1,0 +1,61 @@
+{
+  "$ref": "#/definitions/entitlement",
+  "definitions": {
+    "entitlement": {
+      "type": "object",
+      "properties": {
+        "tier": {
+          "type": "string",
+          "enum": [
+            "free",
+            "pro",
+            "team",
+            "enterprise"
+          ]
+        },
+        "max_resources": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "retention_window_days": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_tier_cap": {
+          "type": "string",
+          "enum": [
+            "haiku",
+            "sonnet",
+            "opus"
+          ]
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tier",
+        "max_resources",
+        "retention_window_days",
+        "model_tier_cap",
+        "notes"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

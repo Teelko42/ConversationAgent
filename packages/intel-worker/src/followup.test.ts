@@ -106,6 +106,33 @@ describe('answerFollowup (F1 follow-up engine)', () => {
     expect(out.state).toBe('ok');
   });
 
+  it('grounds a follow-up in a user source with NO research, citing type:user', async () => {
+    const provider = new CapturingProvider('Per your brief, the launch is set for Q4.');
+    const userSources = [{ id: 'u1', title: 'Launch brief', text: 'The launch is set for Q4.' }];
+    const out = await answerFollowup(baseInput, new LlmGateway(provider, meter()), { userSources }); // no research
+
+    expect(() => FollowupAnswerSchema.parse(out)).not.toThrow();
+    expect(out.state).toBe('ok');
+    expect(out.answer).toContain('Q4');
+    // a type:'user' citation (no url provided → no link), and the prompt carried it.
+    expect(out.sources).toHaveLength(1);
+    expect(out.sources[0]).toMatchObject({ type: 'user' });
+    expect(out.sources[0]!.url).toBeUndefined();
+    expect(provider.prompts[0]).toContain('Provided by the user');
+    expect(provider.prompts[0]).toContain('The launch is set for Q4.');
+  });
+
+  it('blends web + user sources on a follow-up (web first, then user)', async () => {
+    const provider = new CapturingProvider('ARR is annual recurring revenue; your note adds context.');
+    const out = await answerFollowup(baseInput, new LlmGateway(provider, meter()), {
+      research,
+      userSources: [{ id: 'u1', url: 'https://notes/arr', text: 'Our ARR target is $10M.' }],
+    });
+    expect(out.sources).toHaveLength(2);
+    expect(out.sources[0]).toMatchObject({ type: 'web', url: 'https://x/arr' });
+    expect(out.sources[1]).toMatchObject({ type: 'user', url: 'https://notes/arr' });
+  });
+
   it('never throws even when the research provider rejects', async () => {
     const flakyResearch: WebSearchProvider = {
       search: async () => {

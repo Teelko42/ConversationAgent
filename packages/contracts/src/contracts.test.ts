@@ -4,8 +4,20 @@ import {
   ConceptCardSchema,
   InsightItemSchema,
   type InsightItem,
+  AccountSchema,
+  IdentitySchema,
+  SavedSessionSchema,
+  QuotaStatusSchema,
+  TierSchema,
+  ExplanationSourceSchema,
+  UserSourceSchema,
   makeTranscriptSegment,
   makeConceptCard,
+  makeAccount,
+  makeIdentity,
+  makeSavedSession,
+  makeExplanationSource,
+  makeUserSource,
   SESSION,
   TENANT,
   segId,
@@ -92,5 +104,88 @@ describe('CT-M2 — F02↔F03 InsightItem name reconciliation (doc 10 §4)', () 
     const parsed = InsightItemSchema.parse(stale);
     expect('kind' in parsed).toBe(false);
     expect('assignee' in parsed).toBe(false);
+  });
+});
+
+describe('account contracts (New_Feature.md §2)', () => {
+  it('golden Account / Identity / SavedSession validate', () => {
+    expect(AccountSchema.safeParse(makeAccount()).success).toBe(true);
+    expect(IdentitySchema.safeParse(makeIdentity()).success).toBe(true);
+    expect(SavedSessionSchema.safeParse(makeSavedSession()).success).toBe(true);
+  });
+
+  it('Tier is exactly the four packaging tiers (team-10 §1.2)', () => {
+    expect(TierSchema.options).toEqual(['free', 'pro', 'team', 'enterprise']);
+  });
+
+  it('rejects an Account with a non-uuid id', () => {
+    expect(AccountSchema.safeParse(makeAccount({ id: 'not-a-uuid' })).success).toBe(false);
+  });
+
+  it('rejects an Identity with an empty provider_subject', () => {
+    expect(IdentitySchema.safeParse(makeIdentity({ provider_subject: '' })).success).toBe(false);
+  });
+
+  it('SavedSession carries consent forward (account never bypasses team-09)', () => {
+    const sensitive = makeSavedSession({ consent_class: 'sensitive', pii_present: true });
+    expect(SavedSessionSchema.safeParse(sensitive).success).toBe(true);
+    // an invalid consent class is rejected by the shared ConsentClassSchema.
+    const bad = makeSavedSession({ consent_class: 'public' as never });
+    expect(SavedSessionSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it('QuotaStatus allows a null limit (Enterprise configurable)', () => {
+    const ok = QuotaStatusSchema.safeParse({
+      tier: 'enterprise',
+      used: 12,
+      limit: null,
+      retention_window_days: null,
+      exceeded: false,
+    });
+    expect(ok.success).toBe(true);
+  });
+});
+
+describe('BYO user sources (New_Feature.md F2 §4)', () => {
+  it('a golden web ExplanationSource validates', () => {
+    expect(ExplanationSourceSchema.safeParse(makeExplanationSource()).success).toBe(true);
+  });
+
+  it('accepts a type:user source with NO url (renders without a link)', () => {
+    const userCite = {
+      citation_id: 'ct_seg_user_0',
+      type: 'user',
+      snippet: 'We are discussing the Q4 launch.',
+      support_score: 0.5,
+    };
+    expect(ExplanationSourceSchema.safeParse(userCite).success).toBe(true);
+    // a user source MAY also carry a url (a URL-with-comment).
+    expect(
+      ExplanationSourceSchema.safeParse({ ...userCite, url: 'https://example.com/brief' }).success,
+    ).toBe(true);
+  });
+
+  it('still requires a url for type:web (INV-1/2)', () => {
+    expect(ExplanationSourceSchema.safeParse({ citation_id: 'c', type: 'web', title: 'x' }).success).toBe(
+      false,
+    );
+    expect(ExplanationSourceSchema.safeParse(makeExplanationSource({ url: '' })).success).toBe(false);
+  });
+
+  it('rejects malformed sources (unknown type, out-of-range score)', () => {
+    expect(ExplanationSourceSchema.safeParse({ citation_id: 'c', type: 'doc', url: 'u' }).success).toBe(
+      false,
+    );
+    expect(
+      ExplanationSourceSchema.safeParse({ citation_id: 'c', type: 'web', url: 'u', support_score: 2 })
+        .success,
+    ).toBe(false);
+  });
+
+  it('UserSource round-trips: text required, title/url optional', () => {
+    expect(UserSourceSchema.safeParse(makeUserSource()).success).toBe(true);
+    expect(UserSourceSchema.safeParse({ id: 'u', text: 'just a pasted note' }).success).toBe(true);
+    // text is required.
+    expect(UserSourceSchema.safeParse({ id: 'u', title: 'no body' }).success).toBe(false);
   });
 });

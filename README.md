@@ -88,7 +88,9 @@ decisions executable rather than prose.
 packages/                      # pnpm + TypeScript monorepo
   contracts/                   # @aizen/contracts — the 5 canonical contracts (D06)
     src/*.ts                   #   zod schemas + inferred types (incl. retracted state,
-    schema/*.schema.json       #   ConsentContext, kg_snapshot/resync) → JSON Schema registry
+    schema/*.schema.json       #   ConsentContext, kg_snapshot/resync, account/quota) → JSON Schema registry
+  accounts/                    # Account system — AuthProvider seam (Stub + Google/Entra OAuth+PKCE),
+                               #   swappable repo (in-memory + node:sqlite), tier entitlements, fail-closed quota
   adapter-d16/                 # Seam A — pure F01→F02 adapter (rev/supersedes, fail-closed)
   seam-supersede/              # Seam B / INV-8 — provenance index, re-extract/retract
   seam-kg-resync/              # Seam C — delta_seq↔Position index, resync decision tree
@@ -121,6 +123,16 @@ depending on which keys are in `.env` (it never needs all of them to boot):
 | `ANTHROPIC_API_KEY` only | **demo + real AI** | the demo card is explained by the real model |
 | `+ DEEPGRAM_API_KEY` | **live** | speak into your mic → live transcript → real explanations |
 | `+ TAVILY_API_KEY` | **live + sourced** | concept cards carry web citations |
+| `+ GOOGLE_CLIENT_ID/SECRET` or `MICROSOFT_CLIENT_ID/SECRET` | **+ real sign-in** | OAuth (Authorization-Code + PKCE) instead of the stub demo account |
+
+**Accounts (optional, key-gated).** Sign in to get a persistent account with a
+**tier-gated resource quota** (saved sessions: Free 5 / Pro 200 / Team 1,000 /
+Enterprise configurable — team-10 §1.2). With **no** OAuth keys the only sign-in
+offered is a deterministic **Stub** provider ("demo account") so the feature works
+locally without an IdP, and never signing in leaves the anonymous demo flow
+unchanged. Accounts/resources persist to **SQLite** (built-in `node:sqlite`, no
+native build) behind a swappable repository — Postgres+pgvector is the Phase-1+
+target. Over-cap creates are rejected with a typed, user-legible error.
 
 Audio path: the browser captures the mic, downsamples to 16 kHz PCM16, and streams
 it over a WebSocket; the server bridges it to Deepgram, runs extraction +
@@ -131,7 +143,7 @@ runs stubbed or fully real (BD-03), so there is no separate "demo build".
 ### Dev / test
 
 ```bash
-corepack pnpm@9.7.0 test          # 83 tests (contracts, seams, gateway, STT/Deepgram, enrich, research)
+corepack pnpm@9.7.0 test          # 170 tests (contracts, seams, gateway, STT/Deepgram, enrich, research, accounts/OAuth/quota, client UI)
 corepack pnpm@9.7.0 typecheck
 corepack pnpm@9.7.0 spine          # the deterministic stub spine, printed to the console
 corepack pnpm@9.7.0 --filter @aizen/contracts run export-schema   # regenerate the registry

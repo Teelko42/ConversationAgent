@@ -1,0 +1,67 @@
+{
+  "$ref": "#/definitions/saved_session",
+  "definitions": {
+    "saved_session": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "account_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "title": {
+          "type": "string"
+        },
+        "artifact_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "consent_class": {
+          "type": "string",
+          "enum": [
+            "standard",
+            "sensitive"
+          ]
+        },
+        "pii_present": {
+          "type": "boolean"
+        },
+        "created_at_us": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "updated_at_us": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expires_at_us": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "account_id",
+        "title",
+        "artifact_count",
+        "consent_class",
+        "pii_present",
+        "created_at_us",
+        "updated_at_us",
+        "expires_at_us"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

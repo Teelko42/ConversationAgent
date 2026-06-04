@@ -1,0 +1,47 @@
+{
+  "$ref": "#/definitions/quota_error",
+  "definitions": {
+    "quota_error": {
+      "type": "object",
+      "properties": {
+        "error": {
+          "type": "string",
+          "const": "quota_exceeded"
+        },
+        "tier": {
+          "type": "string",
+          "enum": [
+            "free",
+            "pro",
+            "team",
+            "enterprise"
+          ]
+        },
+        "used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "message": {
+          "type": "string"
+        },
+        "remedy": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "error",
+        "tier",
+        "used",
+        "limit",
+        "message",
+        "remedy"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

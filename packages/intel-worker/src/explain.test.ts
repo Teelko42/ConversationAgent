@@ -90,6 +90,57 @@ describe('explainSentence (P2 sentence explain engine)', () => {
   });
 });
 
+/**
+ * Branches like ScriptedProvider, but the "answer" hop returns a fixed reply for
+ * ANY answer prompt (web-only or user-grounded) — it keys on the explain prompt's
+ * `"breakdown"` marker, not on the web-only "Use ONLY these web sources" phrase.
+ */
+class UserGroundedProvider implements LlmProvider {
+  readonly prompts: string[] = [];
+  async complete(req: CompletionRequest) {
+    this.prompts.push(req.prompt);
+    const text = req.prompt.includes('"breakdown"')
+      ? '{"explanation":"asks when Project X ships","breakdown":[],"is_question":true,"search_query":"project x ship date"}'
+      : '{"answer":"Project X ships in Q4 per the brief."}';
+    return { text, usage: { inputTokens: 10, outputTokens: 10 } };
+  }
+}
+
+describe('explainSentence with user-provided sources (F2 — BYO sources)', () => {
+  it('answers a question from a user source with NO research provider, citing type:user', async () => {
+    const provider = new UserGroundedProvider();
+    const userSources = [
+      { id: 'u1', title: 'Q4 brief', text: 'Project X ships in Q4.' },
+    ];
+    const out = await explainSentence(
+      { ...input, text: 'When does Project X ship?' },
+      new LlmGateway(provider, new CostMeter({ tenantCeilingUsd: 10, opusCallCap: 4 })),
+      { userSources }, // NO research — the user source alone grounds the answer
+    );
+
+    expect(() => SentenceExplanationSchema.parse(out)).not.toThrow();
+    expect(out.is_question).toBe(true);
+    expect(out.answer).toContain('Q4');
+    expect(out.sources).toHaveLength(1);
+    expect(out.sources[0]).toMatchObject({ type: 'user' });
+    expect(out.sources[0]!.url).toBeUndefined(); // no url provided → no link
+    // the answer prompt carried the user block verbatim.
+    const answerPrompt = provider.prompts.find((p) => p.includes('"answer"') && !p.includes('"breakdown"'))!;
+    expect(answerPrompt).toContain('Provided by the user');
+    expect(answerPrompt).toContain('Project X ships in Q4.');
+  });
+
+  it('blends web + user sources when both are present (web first, then user)', async () => {
+    const out = await explainSentence(input, gateway(), {
+      research,
+      userSources: [{ id: 'u1', url: 'https://notes/paris', text: 'We toured Paris last spring.' }],
+    });
+    expect(out.sources).toHaveLength(2);
+    expect(out.sources[0]).toMatchObject({ type: 'web' });
+    expect(out.sources[1]).toMatchObject({ type: 'user', url: 'https://notes/paris' });
+  });
+});
+
 describe('explain heuristics', () => {
   it('looksLikeQuestion detects "?" and leading interrogatives', () => {
     expect(looksLikeQuestion('How does this work')).toBe(true);

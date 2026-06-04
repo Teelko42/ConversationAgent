@@ -25,3 +25,16 @@ export type {
   SocketFactory,
 } from './provider-deepgram.js';
 export { DeepgramSttProvider } from './provider-deepgram.js';
+
+// --- Diarization (Speaker_Research.md §9.1/§9.4): word-level attribution ---
+export { diarizeWords } from './diarization.js';
+export type {
+  DiarWord,
+  ContractWord,
+  DiarizedSegment,
+  DiarizeOptions,
+} from './diarization.js';
+
+// --- Diarization evaluation harness (Speaker_Research.md §7/§9.7): DER ---
+export { computeDer, parseRttm } from './der.js';
+export type { Turn, DerOptions, DerResult } from './der.js';

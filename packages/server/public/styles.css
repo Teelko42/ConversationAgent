@@ -656,7 +656,7 @@ main {
   position: relative;
   overflow: hidden;
   padding: 18px 18px 16px;
-  border-radius: var(--r-md);
+  border-radius: 0;
   background: var(--glass);
   border: 1px solid var(--line);
   box-shadow: var(--glow-soft);
@@ -751,7 +751,7 @@ main {
   display: flex;
   flex-direction: column;
   padding: 20px 20px 6px;
-  border-radius: var(--r-lg);
+  border-radius: 0;
   background: var(--glass);
   border: 1px solid var(--line);
   box-shadow: var(--glow-soft);
@@ -1454,4 +1454,706 @@ body.nav-open .nav-backdrop {
   .stat-row {
     grid-template-columns: 1fr;
   }
+}
+
+/* =========================================================================
+   Account widget (sign in/out · identity + tier · quota usage)
+   New_Feature.md §6 — minimal, consistent with the existing topbar chrome.
+   ========================================================================= */
+.account {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+/* The popover panels (sign-in menu + account panel) share this look. */
+.acct-menu,
+.acct-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 60;
+  min-width: 248px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--glass-raise, var(--panel));
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  box-shadow: 0 18px 48px -16px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(12px);
+}
+.acct-menu[hidden],
+.acct-panel[hidden],
+.acct-signin[hidden],
+.acct-user[hidden],
+.quota-over[hidden],
+.acct-msg[hidden] {
+  display: none;
+}
+
+.acct-menu .btn {
+  justify-content: flex-start;
+  width: 100%;
+}
+
+/* Signed-in chip in the topbar. */
+.acct-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  height: 40px;
+  padding: 0 10px 0 6px;
+  background: var(--glass, transparent);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  color: var(--text);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.acct-chip:hover {
+  border-color: var(--line-strong);
+}
+.acct-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.15;
+}
+.acct-name {
+  font-size: 12.5px;
+  font-weight: 700;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tier-chip {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+/* Per-tier accent on the little tier badge. */
+.tier-chip.tier-pro {
+  color: var(--good);
+}
+.tier-chip.tier-team {
+  color: var(--violet);
+}
+.tier-chip.tier-enterprise {
+  color: var(--warn);
+}
+
+.acct-id {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.acct-fullname {
+  font-weight: 700;
+  font-size: 13px;
+}
+.acct-email {
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Quota meter ("X of N saved sessions used"). */
+.quota-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11.5px;
+}
+.quota-label {
+  color: var(--muted);
+}
+.quota-count {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.quota-bar {
+  margin-top: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--well, rgba(127, 127, 127, 0.18));
+  overflow: hidden;
+}
+.quota-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.25s ease, background 0.2s ease;
+}
+.quota.over .quota-fill {
+  background: var(--red, #e5484d);
+}
+.quota.over .quota-count {
+  color: var(--red, #e5484d);
+}
+.quota-over {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--warn);
+}
+
+.acct-msg {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.acct-msg.error {
+  color: var(--red, #e5484d);
+}
+.acct-msg.ok {
+  color: var(--good);
+}
+
+@media (max-width: 720px) {
+  .acct-menu,
+  .acct-panel {
+    right: auto;
+    left: 0;
+  }
+  .acct-name {
+    display: none;
+  }
+}
+
+/* =========================================================================
+   Modal / popup (sidebar "Providers" + "Settings" tabs open this)
+   ========================================================================= */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--scrim, rgba(8, 10, 20, 0.55));
+  backdrop-filter: blur(4px);
+  animation: modal-fade 0.16s ease;
+}
+.modal-overlay[hidden] {
+  display: none;
+}
+@keyframes modal-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.modal {
+  width: min(560px, 100%);
+  max-height: min(82vh, 760px);
+  display: flex;
+  flex-direction: column;
+  background: var(--glass-raise, var(--panel));
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg, 16px);
+  box-shadow: 0 28px 80px -20px rgba(0, 0, 0, 0.65);
+  overflow: hidden;
+  animation: modal-pop 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+@keyframes modal-pop {
+  from {
+    transform: translateY(8px) scale(0.98);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.modal-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+.modal-close {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-sm, 8px);
+  border: 1px solid var(--line);
+  background: var(--glass, transparent);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.modal-close:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+.modal-body {
+  padding: 18px;
+  overflow-y: auto;
+}
+
+/* Provider rows (status list inside the Providers popup). */
+.prov-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 0 4px;
+}
+.prov-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--glass, transparent);
+}
+.prov-ico {
+  font-size: 18px;
+  line-height: 1.1;
+  width: 22px;
+  text-align: center;
+}
+.prov-main {
+  flex: 1;
+  min-width: 0;
+}
+.prov-name {
+  font-weight: 700;
+  font-size: 13px;
+}
+.prov-desc {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.prov-badge {
+  flex-shrink: 0;
+  align-self: center;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  padding: 4px 9px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.prov-badge.on {
+  color: #061b12;
+  background: var(--good);
+  border-color: transparent;
+}
+.prov-badge.demo {
+  color: #2a1e02;
+  background: var(--warn);
+  border-color: transparent;
+}
+
+.modal-section-label {
+  margin: 18px 0 8px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Plan / quota-limits table. */
+.plan-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.plan-table th,
+.plan-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.plan-table th {
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 700;
+}
+.plan-table td:first-child {
+  font-weight: 700;
+}
+.plan-table tr.current td {
+  background: var(--nav-active-bg, rgba(77, 107, 255, 0.12));
+}
+.plan-cap {
+  font-variant-numeric: tabular-nums;
+}
+.plan-current-tag {
+  margin-left: 6px;
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+/* Account (Settings popup) blocks. */
+.set-id {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.set-avatar {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, var(--violet), var(--accent-deep));
+  border: 1px solid var(--line-strong);
+}
+.set-id-main {
+  min-width: 0;
+}
+.set-id-name {
+  font-weight: 800;
+  font-size: 15px;
+}
+.set-id-sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+.set-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 14px 0;
+}
+.set-cell {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--glass, transparent);
+}
+.set-cell-label {
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.set-cell-value {
+  margin-top: 4px;
+  font-size: 15px;
+  font-weight: 700;
+}
+.set-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.set-anon {
+  text-align: center;
+  padding: 8px 0 4px;
+}
+.set-anon p {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0 0 14px;
+}
+.set-anon .btn {
+  width: 100%;
+  margin-bottom: 8px;
+  justify-content: center;
+}
+
+@media (max-width: 480px) {
+  .set-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* =========================================================================
+   Focus popups (Workspace/Insights tabs: Transcript / Explanation /
+   Activity / Sources) — show ONE section exclusively in the shared modal.
+   ========================================================================= */
+/* A focus popup is wider than the info popups and gives the section room. */
+.modal-overlay.modal-focus .modal {
+  width: min(940px, 100%);
+  max-height: min(88vh, 900px);
+}
+.modal-focus .modal-body {
+  padding: 16px;
+}
+/* The relocated live card drops its own outer frame so it fills the modal
+   cleanly instead of nesting a card-in-a-card. */
+.modal-focus .modal-body > .glow-card {
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+.modal-focus .modal-body > .glow-card::after {
+  display: none;
+}
+/* The modal body is the single scroll container here — let the inner stream
+   grow to its content rather than scrolling within a scroll. */
+.modal-focus .modal-body > .glow-card .stream {
+  max-height: none;
+  min-height: 0;
+}
+/* Activity: the four stat cards read better two-up inside the narrower modal. */
+.modal-focus .modal-body > .stat-row {
+  grid-template-columns: repeat(2, 1fr);
+}
+@media (max-width: 560px) {
+  .modal-focus .modal-body > .stat-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Sources popup — the de-duplicated list of cited web pages. */
+.src-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.src-item {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--glass, transparent);
+}
+.src-link {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--accent);
+  text-decoration: none;
+  word-break: break-word;
+}
+.src-link:hover {
+  text-decoration: underline;
+}
+.src-host {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--muted-2);
+  white-space: nowrap;
+}
+.src-ctx {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.sources-empty {
+  margin: 4px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ---- F2: "Your sources" (BYO context) in the Sources popup ---------------- */
+.usrc-section {
+  margin-bottom: 18px;
+}
+.sources-hint {
+  margin: 4px 0 10px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.usrc-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.usrc-input,
+.usrc-textarea {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--glass, transparent);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+}
+.usrc-textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+.usrc-input:focus,
+.usrc-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.usrc-add {
+  align-self: flex-start;
+}
+.usrc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.usrc-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--glass, transparent);
+}
+.usrc-main {
+  flex: 1;
+  min-width: 0;
+}
+.usrc-title {
+  font-weight: 700;
+  font-size: 13px;
+}
+.usrc-url {
+  display: inline-block;
+  font-size: 11.5px;
+  color: var(--accent);
+  text-decoration: none;
+  word-break: break-word;
+}
+.usrc-url:hover {
+  text-decoration: underline;
+}
+.usrc-text {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.usrc-remove {
+  flex: none;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted-2);
+  border-radius: var(--r-md);
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  line-height: 1;
+}
+.usrc-remove:hover {
+  color: var(--danger, #e5484d);
+  border-color: var(--danger, #e5484d);
+}
+
+/* ---- F1: Saved-session history popup -------------------------------------- */
+.hist-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hist-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--glass, transparent);
+}
+.hist-main {
+  flex: 1;
+  min-width: 0;
+}
+.hist-title {
+  font-weight: 700;
+  font-size: 13.5px;
+  word-break: break-word;
+}
+.hist-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--muted-2);
+}
+.hist-chip.sensitive {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--danger, #e5484d);
+  background: color-mix(in srgb, var(--danger, #e5484d) 14%, transparent);
+}
+.hist-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.hist-actions .btn {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+.hist-confirm {
+  font-size: 12px;
+  color: var(--muted);
+}
+.btn-danger {
+  background: var(--danger, #e5484d);
+  color: #fff;
+  border: 1px solid transparent;
+}
+.btn-danger:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+.hist-back {
+  margin-bottom: 12px;
+}
+.hist-detail-title {
+  margin: 0 0 2px;
+  font-size: 15px;
+}
+.hist-detail-meta {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--muted-2);
+}
+.hist-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 56vh;
+  overflow-y: auto;
+}
+.hist-transcript .line {
+  padding: 6px 8px;
+  border-radius: var(--r-sm, 8px);
 }

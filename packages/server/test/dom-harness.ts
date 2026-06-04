@@ -24,7 +24,14 @@ const ID_LIST = [
   'stat-lines', 'stat-questions', 'stat-sources', 'stat-words',
   'transcript-search', 'conn-chip', 'sidebar', 'nav-toggle', 'nav-backdrop',
   'followup', 'followup-input', 'followup-send', 'followup-thread',
-  'popout', 'card-transcript', 'card-explanation', 'theme-toggle',
+  'popout', 'card-stats', 'card-transcript', 'card-explanation', 'theme-toggle',
+  // account widget
+  'account', 'acct-signin', 'signin-btn', 'acct-menu', 'acct-user', 'acct-chip',
+  'acct-avatar', 'acct-name', 'acct-tier', 'acct-panel', 'acct-fullname',
+  'acct-email', 'quota', 'quota-text', 'quota-fill', 'quota-over',
+  'save-session-btn', 'acct-msg', 'signout-btn',
+  // popup/modal (Providers + Settings tabs)
+  'modal-overlay', 'modal-title', 'modal-body', 'modal-close',
 ];
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -236,6 +243,16 @@ function makeEl(tag: string, doc: El): El {
       return makeEl(tag, doc);
     },
     focus() {},
+    // Scroll APIs the client uses to keep the explanation tab in view. No layout
+    // engine here, so they just record the last call for assertions.
+    scrollTop: 0,
+    scrollHeight: 0,
+    scrollTo(opts: unknown) {
+      el._scrolledTo = opts;
+    },
+    scrollIntoView(opts: unknown) {
+      el._scrolledIntoView = opts;
+    },
   };
   return el;
 }
@@ -260,6 +277,12 @@ export interface FakeSocket {
   addEventListener(): void;
 }
 
+export interface FetchCall {
+  url: string;
+  init?: unknown;
+}
+export type FetchHandler = (url: string, init?: unknown) => unknown;
+
 export interface Harness {
   document: El;
   window: El;
@@ -268,6 +291,25 @@ export interface Harness {
   sockets: FakeSocket[];
   opened: unknown[][];
   storage: Record<string, string>;
+  location: Record<string, string>;
+  fetchCalls: FetchCall[];
+  setFetch(fn: FetchHandler): void;
+  /** Resolve after pending micro/macro tasks (lets bootAccount/fetch settle). */
+  tick(): Promise<void>;
+  /** The sidebar nav items (Providers/Settings info popups, the Transcript/
+   *  Explanation/Activity/Sources focus popups, and the "Live Session" item). */
+  nav: {
+    providers: El;
+    settings: El;
+    live: El;
+    transcript: El;
+    explanation: El;
+    activity: El;
+    sources: El;
+    history: El;
+  };
+  /** Fire a document-level event (e.g. a 'keydown' for Escape). */
+  fireDoc(type: string, ev?: unknown): void;
   makePipWindow(): PipWindowMock;
 }
 
@@ -277,7 +319,7 @@ export interface Harness {
  * is present on the mocked window (to exercise the supported vs. fallback paths).
  */
 export function loadClient(
-  opts: { withDocumentPiP?: boolean; initialTheme?: 'light' | 'dark' } = {},
+  opts: { withDocumentPiP?: boolean; initialTheme?: 'light' | 'dark'; fetch?: FetchHandler } = {},
 ): Harness {
   const byIdMap: Record<string, El> = {};
   const documentListeners: Record<string, Array<(ev: unknown) => void>> = {};
@@ -315,6 +357,11 @@ export function loadClient(
     byIdMap[id] = el;
   }
 
+  // The stat row ("Activity" focus popup relocates this) lives above the grid.
+  const statRow = byIdMap['card-stats'];
+  statRow.className = 'stat-row';
+  doc.body.appendChild(statRow);
+
   // The two pop-out panels live inside a content grid in the body so restore has a
   // real parent to return them to.
   const grid = makeEl('section', doc);
@@ -327,6 +374,34 @@ export function loadClient(
   btnTxt.className = 'btn-txt';
   btnTxt.textContent = 'Pop out';
   byIdMap['popout'].appendChild(btnTxt);
+
+  // Sidebar nav items the client wires at load (querySelectorAll('.nav-item')).
+  // Items carrying data-modal open a popup on click; the "Live Session" item
+  // (data-view) shows the full dashboard. Placed in the body so the client's
+  // nav-item query finds them.
+  const nav = makeEl('nav', doc);
+  const makeNavItem = (attrs: Record<string, string>, label: string): El => {
+    const a = makeEl('a', doc);
+    a.className = 'nav-item';
+    for (const [k, v] of Object.entries(attrs)) a.setAttribute(k, v);
+    const lbl = makeEl('span', doc);
+    lbl.className = 'nav-label';
+    lbl.textContent = label;
+    a.appendChild(lbl);
+    nav.appendChild(a);
+    return a;
+  };
+  const navLive = makeNavItem({ 'data-view': 'live', 'data-target': 'card-stats' }, 'Live Session');
+  const navTranscript = makeNavItem({ 'data-modal': 'transcript', 'data-target': 'card-transcript' }, 'Transcript');
+  const navExplanation = makeNavItem({ 'data-modal': 'explanation', 'data-target': 'card-explanation' }, 'Explanation');
+  const navActivity = makeNavItem({ 'data-modal': 'activity', 'data-target': 'card-stats' }, 'Activity');
+  const navSources = makeNavItem({ 'data-modal': 'sources', 'data-target': 'card-explanation' }, 'Sources');
+  const navHistory = makeNavItem({ 'data-modal': 'history', 'data-target': 'card-stats' }, 'Saved sessions');
+  const navProviders = makeNavItem({ 'data-modal': 'providers', 'data-target': 'status' }, 'Providers');
+  const navSettings = makeNavItem({ 'data-modal': 'settings', 'data-target': 'card-stats' }, 'Settings');
+  doc.body.appendChild(nav);
+  // Modal overlay starts hidden (the real markup sets the `hidden` attribute).
+  byIdMap['modal-overlay'].hidden = true;
 
   // Seed the opener head with a stylesheet link + a <style> so copyStyles has
   // something to clone into the PiP document.
@@ -425,6 +500,21 @@ export function loadClient(
     },
   };
 
+  // A configurable fetch mock for the account widget. Default = anonymous session
+  // (so existing tests that don't care about accounts boot unchanged).
+  const fetchCalls: FetchCall[] = [];
+  const defaultFetch: FetchHandler = (url) => {
+    if (String(url).startsWith('/api/session')) {
+      return { ok: true, status: 200, json: async () => ({ authenticated: false, providers: ['stub'], authMode: 'stub' }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+  let fetchImpl: FetchHandler = opts.fetch ?? defaultFetch;
+  const fetchMock = (url: unknown, init?: unknown): Promise<unknown> => {
+    fetchCalls.push({ url: String(url), init });
+    return Promise.resolve(fetchImpl(String(url), init));
+  };
+
   const ctx = createContext({
     document: doc,
     window: windowObj,
@@ -433,6 +523,7 @@ export function loadClient(
     location,
     localStorage,
     console: noopConsole,
+    fetch: fetchMock,
     setTimeout,
     clearTimeout,
   });
@@ -447,6 +538,25 @@ export function loadClient(
     sockets,
     opened,
     storage,
+    location,
+    fetchCalls,
+    setFetch: (fn: FetchHandler) => {
+      fetchImpl = fn;
+    },
+    tick: () => new Promise<void>((r) => setTimeout(r, 0)),
+    nav: {
+      providers: navProviders,
+      settings: navSettings,
+      live: navLive,
+      transcript: navTranscript,
+      explanation: navExplanation,
+      activity: navActivity,
+      sources: navSources,
+      history: navHistory,
+    },
+    fireDoc: (type: string, ev?: unknown) => {
+      (documentListeners[type] || []).slice().forEach((fn) => fn(ev ?? { type }));
+    },
     makePipWindow,
   };
 }

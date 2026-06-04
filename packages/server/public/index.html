@@ -58,8 +58,13 @@
         </div>
 
         <nav class="nav">
+          <!-- "Live Session" is the default full-dashboard view: clicking it closes
+               any focus popup and shows every section. The other Workspace/Insights
+               tabs open an EXCLUSIVE popup (data-modal) that shows only that one
+               thing — the live section is relocated into the modal so it keeps
+               updating, then moved back on close (see client.js openModal). -->
           <p class="nav-group-label">Workspace</p>
-          <a class="nav-item active" href="#card-stats" data-target="card-stats">
+          <a class="nav-item active" href="#card-stats" data-target="card-stats" data-view="live">
             <span class="nav-ico" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M3 12h3l2.5 6 4-13 2.5 7H21" />
@@ -68,7 +73,7 @@
             <span class="nav-label">Live Session</span>
             <span class="nav-dot" aria-hidden="true"></span>
           </a>
-          <a class="nav-item" href="#card-transcript" data-target="card-transcript">
+          <a class="nav-item" href="#card-transcript" data-target="card-transcript" data-modal="transcript">
             <span class="nav-ico" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M4 5h16M4 10h10M4 15h16M4 20h7" />
@@ -76,7 +81,7 @@
             </span>
             <span class="nav-label">Transcript</span>
           </a>
-          <a class="nav-item" href="#card-explanation" data-target="card-explanation">
+          <a class="nav-item" href="#card-explanation" data-target="card-explanation" data-modal="explanation">
             <span class="nav-ico" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                 <path d="m12 3 1.9 4.6L18.5 9l-4.6 1.9L12 15l-1.9-4.1L5.5 9l4.6-1.4zM18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z" />
@@ -85,8 +90,20 @@
             <span class="nav-label">Explanation</span>
           </a>
 
+          <p class="nav-group-label">Library</p>
+          <a class="nav-item" href="#card-stats" data-target="card-stats" data-modal="history">
+            <span class="nav-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+                <path d="M3 4v4h4" />
+                <path d="M12 8v4l2.5 2.5" />
+              </svg>
+            </span>
+            <span class="nav-label">Saved sessions</span>
+          </a>
+
           <p class="nav-group-label">Insights</p>
-          <a class="nav-item" href="#card-stats" data-target="card-stats">
+          <a class="nav-item" href="#card-stats" data-target="card-stats" data-modal="activity">
             <span class="nav-ico" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M3 12h4l2-6 4 12 2-6h6" />
@@ -94,7 +111,7 @@
             </span>
             <span class="nav-label">Activity</span>
           </a>
-          <a class="nav-item" href="#card-explanation" data-target="card-explanation">
+          <a class="nav-item" href="#card-explanation" data-target="card-explanation" data-modal="sources">
             <span class="nav-ico" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M9 15 15 9M10.5 7.5 12 6a3.5 3.5 0 0 1 5 5l-1.5 1.5M13.5 16.5 12 18a3.5 3.5 0 0 1-5-5l1.5-1.5" />
@@ -104,7 +121,7 @@
           </a>
 
           <p class="nav-group-label">System</p>
-          <a class="nav-item" href="#status" data-target="status">
+          <a class="nav-item" href="#status" data-target="status" data-modal="providers">
             <span class="nav-ico" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="4" y="4" width="16" height="16" rx="3" />
@@ -113,7 +130,7 @@
             </span>
             <span class="nav-label">Providers</span>
           </a>
-          <a class="nav-item" href="#card-stats" data-target="card-stats">
+          <a class="nav-item" href="#card-stats" data-target="card-stats" data-modal="settings">
             <span class="nav-ico" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="3" />
@@ -179,8 +196,50 @@
               <span class="btn-ico" aria-hidden="true">⧉</span><span class="btn-txt">Pop out</span>
             </button>
 
-            <div class="user" aria-hidden="true">
-              <span class="user-avatar">AZ</span>
+            <!-- Account: sign in / sign out, current identity + tier, quota usage.
+                 Both states start hidden; client.js shows one after GET /api/session.
+                 Key-gated — with no OAuth keys the only provider offered is the
+                 deterministic Stub ("demo account"); the anonymous flow is unchanged. -->
+            <div class="account" id="account">
+              <div class="acct-signin" id="acct-signin" hidden>
+                <button id="signin-btn" class="btn btn-secondary" type="button" aria-haspopup="true" aria-expanded="false">
+                  <span class="btn-ico" aria-hidden="true">👤</span><span class="btn-txt">Sign in</span>
+                </button>
+                <div class="acct-menu" id="acct-menu" role="menu" hidden></div>
+              </div>
+
+              <div class="acct-user" id="acct-user" hidden>
+                <button id="acct-chip" class="acct-chip" type="button" aria-haspopup="true" aria-expanded="false" title="Account">
+                  <span class="user-avatar" id="acct-avatar">AZ</span>
+                  <span class="acct-meta">
+                    <span class="acct-name" id="acct-name">Account</span>
+                    <span class="tier-chip" id="acct-tier">FREE</span>
+                  </span>
+                </button>
+                <div class="acct-panel" id="acct-panel" hidden>
+                  <div class="acct-id">
+                    <span class="acct-fullname" id="acct-fullname">Account</span>
+                    <span class="acct-email" id="acct-email"></span>
+                  </div>
+                  <div class="quota" id="quota">
+                    <div class="quota-head">
+                      <span class="quota-label">Saved sessions</span>
+                      <span class="quota-count" id="quota-text">0 of 5</span>
+                    </div>
+                    <div class="quota-bar" aria-hidden="true"><span class="quota-fill" id="quota-fill"></span></div>
+                    <p class="quota-over" id="quota-over" hidden>
+                      You've reached your plan's limit. Delete a saved session or upgrade for more.
+                    </p>
+                  </div>
+                  <button id="save-session-btn" class="btn btn-primary acct-save" type="button">
+                    <span class="btn-txt">Save this session</span>
+                  </button>
+                  <p class="acct-msg" id="acct-msg" hidden></p>
+                  <button id="signout-btn" class="btn btn-secondary acct-signout" type="button">
+                    <span class="btn-txt">Sign out</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </header>
@@ -286,6 +345,21 @@
         <footer>
           <span id="hint"></span>
         </footer>
+      </div>
+    </div>
+
+    <!-- Reusable popup/modal. The sidebar "Providers" tab fills it with provider
+         status + plan quota limits; the "Settings" tab fills it with account info.
+         Hidden by default; client.js shows it and injects #modal-body. -->
+    <div class="modal-overlay" id="modal-overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-head">
+          <h2 id="modal-title" class="modal-title">Details</h2>
+          <button id="modal-close" class="modal-close" type="button" aria-label="Close">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+          </button>
+        </div>
+        <div id="modal-body" class="modal-body"></div>
       </div>
     </div>
 

@@ -12,10 +12,12 @@ export * from './transcript-segment.js';
 export * from './concept-card.js';
 export * from './sentence-explanation.js';
 export * from './followup-answer.js';
+export * from './user-source.js';
 export * from './kg.js';
 export * from './insight.js';
 export * from './resync.js';
 export * from './extraction-input.js';
+export * from './account.js';
 
 // Golden-object builders for contract tests (shared across seam packages).
 export * from './fixtures.js';
