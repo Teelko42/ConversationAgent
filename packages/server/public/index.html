@@ -23,12 +23,12 @@
     </script>
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%234d6bff'/%3E%3Cstop offset='1' stop-color='%230d17e7'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='9' fill='url(%23g)'/%3E%3Cpath d='M9 23 16 9l7 14h-3l-1.4-3h-5.2L11 23z' fill='white'/%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2315807c'/%3E%3Cstop offset='1' stop-color='%230a544f'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='7' fill='url(%23g)'/%3E%3Cpath d='M9 23 16 9l7 14h-3l-1.4-3h-5.2L11 23z' fill='white'/%3E%3C/svg%3E"
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/styles.css" />
@@ -161,8 +161,8 @@
           </button>
 
           <div class="page-title">
-            <h1>Live Conversation Intelligence</h1>
-            <p class="page-sub">Real-time transcript, word-by-word breakdowns, and web-grounded answers</p>
+            <h1>Hear it. Read it. Understand it.</h1>
+            <p class="page-sub">Live transcription, instant word-by-word breakdowns, and web-grounded answers — as the conversation happens.</p>
           </div>
 
           <div class="topbar-actions">
@@ -178,22 +178,22 @@
 
             <div class="controls" role="group" aria-label="Audio capture">
               <button id="mic" class="btn btn-secondary" disabled>
-                <span class="btn-ico" aria-hidden="true">🎙</span><span class="btn-txt">Mic</span>
+                <span class="btn-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v4"/></svg></span><span class="btn-txt">Mic</span>
               </button>
               <button id="sys" class="btn btn-secondary" disabled>
-                <span class="btn-ico" aria-hidden="true">🖥</span><span class="btn-txt">Computer audio</span>
+                <span class="btn-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span><span class="btn-txt">Computer audio</span>
               </button>
               <button id="both" class="btn btn-primary" disabled>
-                <span class="btn-ico" aria-hidden="true">🎙🖥</span><span class="btn-txt">Mic + computer</span>
+                <span class="btn-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10v4M7 6v12M11 9v6M15 5v14M19 8v8"/></svg></span><span class="btn-txt">Mic + computer</span>
               </button>
             </div>
 
             <button id="theme-toggle" class="btn btn-secondary theme-toggle" type="button" aria-label="Switch color theme" aria-pressed="false" title="Switch to dark mode">
-              <span class="theme-ico theme-ico-moon" aria-hidden="true">🌙</span><span class="theme-ico theme-ico-sun" aria-hidden="true">☀️</span>
+              <span class="theme-ico theme-ico-moon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/></svg></span><span class="theme-ico theme-ico-sun" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/></svg></span>
             </button>
 
             <button id="popout" class="btn btn-secondary popout-btn" type="button" title="Pop out the live view into a floating, always-on-top window">
-              <span class="btn-ico" aria-hidden="true">⧉</span><span class="btn-txt">Pop out</span>
+              <span class="btn-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7M21 3l-9 9"/><path d="M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/></svg></span><span class="btn-txt">Pop out</span>
             </button>
 
             <!-- Account: sign in / sign out, current identity + tier, quota usage.
@@ -203,7 +203,7 @@
             <div class="account" id="account">
               <div class="acct-signin" id="acct-signin" hidden>
                 <button id="signin-btn" class="btn btn-secondary" type="button" aria-haspopup="true" aria-expanded="false">
-                  <span class="btn-ico" aria-hidden="true">👤</span><span class="btn-txt">Sign in</span>
+                  <span class="btn-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></span><span class="btn-txt">Sign in</span>
                 </button>
                 <div class="acct-menu" id="acct-menu" role="menu" hidden></div>
               </div>

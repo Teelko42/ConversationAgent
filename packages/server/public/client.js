@@ -750,14 +750,24 @@
     return src;
   }
 
+  // Inline SVG provenance icons for BYO-source citations (vault / file / note),
+  // matching the UI's stroke-icon set instead of emoji.
+  const SVG_OBSIDIAN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12l4 6-10 12L2 9z"/><path d="M2 9h20"/></svg>';
+  const SVG_FILE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M7 3h7l5 5v11a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/></svg>';
+  const SVG_NOTE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+
   // A non-link citation for the asker's own source, icon'd by provenance.
   function sourceChip(s) {
     const span = document.createElement('span');
     const type = s.type || 'user';
     span.className = 'src-chip src-chip-' + type;
-    const icon = type === 'obsidian' ? '🔮 ' : type === 'file' ? '📄 ' : '📝 ';
+    const ico = document.createElement('span');
+    ico.className = 'src-chip-ico';
+    ico.setAttribute('aria-hidden', 'true');
+    ico.innerHTML = type === 'obsidian' ? SVG_OBSIDIAN : type === 'file' ? SVG_FILE : SVG_NOTE;
     const fallback = type === 'obsidian' ? 'vault note' : type === 'file' ? 'file' : 'your note';
-    span.textContent = icon + (s.title || fallback);
+    span.appendChild(ico);
+    span.appendChild(document.createTextNode(s.title || fallback));
     if (s.snippet) span.title = s.snippet; // hover shows the grounding excerpt
     return span;
   }
@@ -1254,10 +1264,16 @@
   // <span class="btn-ico"> / <span class="btn-txt"> structure in place (the CSS
   // hides .btn-txt on mobile for icon-only pills) instead of flattening the
   // button to plain text.
+  // Inline SVG icons (Lucide-style) so the capture buttons match the rest of the
+  // UI's icon set instead of emoji. Injected via innerHTML by updateButtons().
+  const ICO_MIC = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v4"/></svg>';
+  const ICO_MONITOR = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>';
+  const ICO_WAVES = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10v4M7 6v12M11 9v6M15 5v14M19 8v8"/></svg>';
+  const ICO_STOP = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
   const BTN = {
-    mic: { el: () => els.mic, idleIco: '🎙', idleTxt: 'Mic', recIco: '⏹', recTxt: 'Stop mic' },
-    sys: { el: () => els.sys, idleIco: '🖥', idleTxt: 'Computer audio', recIco: '⏹', recTxt: 'Stop computer' },
-    both: { el: () => els.both, idleIco: '🎙🖥', idleTxt: 'Mic + computer', recIco: '⏹', recTxt: 'Stop both' },
+    mic: { el: () => els.mic, idleIco: ICO_MIC, idleTxt: 'Mic', recIco: ICO_STOP, recTxt: 'Stop mic' },
+    sys: { el: () => els.sys, idleIco: ICO_MONITOR, idleTxt: 'Computer audio', recIco: ICO_STOP, recTxt: 'Stop computer' },
+    both: { el: () => els.both, idleIco: ICO_WAVES, idleTxt: 'Mic + computer', recIco: ICO_STOP, recTxt: 'Stop both' },
   };
 
   function floatToPcm16Downsampled(input, inRate) {
@@ -1463,11 +1479,11 @@
       const ico = btn.querySelector('.btn-ico');
       const txt = btn.querySelector('.btn-txt');
       if (ico && txt) {
-        ico.textContent = active ? cfg.recIco : cfg.idleIco;
+        ico.innerHTML = active ? cfg.recIco : cfg.idleIco;
         txt.textContent = active ? cfg.recTxt : cfg.idleTxt;
       } else {
         // Fallback if the markup ever omits the spans: keep the old flat label.
-        btn.textContent = active ? cfg.recIco + ' ' + cfg.recTxt : cfg.idleIco + ' ' + cfg.idleTxt;
+        btn.innerHTML = active ? cfg.recIco + ' ' + cfg.recTxt : cfg.idleIco + ' ' + cfg.idleTxt;
       }
       btn.classList.toggle('recording', active);
     }
@@ -2001,16 +2017,16 @@
     const body = mk('div', 'modal-content');
 
     const defs = [
-      { icon: '🎙', name: 'Speech-to-text', on: ps.stt === 'deepgram',
+      { icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v4"/></svg>', name: 'Speech-to-text', on: ps.stt === 'deepgram',
         onText: 'Deepgram — live transcription of your mic & computer audio.',
         offText: 'Stub — a canned demo clip drives the transcript.', onBadge: 'Live', offBadge: 'Demo', offCls: 'demo' },
-      { icon: '✨', name: 'Explanations', on: ps.llm === 'anthropic',
+      { icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 4 1.6 3.9L17.5 9.5l-3.9 1.6L12 15l-1.6-3.9L6.5 9.5l3.9-1.6z"/><path d="M19 14l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6z"/></svg>', name: 'Explanations', on: ps.llm === 'anthropic',
         onText: 'Anthropic Claude — plain-language explanations & answers.',
         offText: 'Stub — canned demo replies (add ANTHROPIC_API_KEY).', onBadge: 'Live', offBadge: 'Demo', offCls: 'demo' },
-      { icon: '🔎', name: 'Web search', on: ps.search === 'tavily',
+      { icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>', name: 'Web search', on: ps.search === 'tavily',
         onText: 'Tavily — answers grounded in cited web sources.',
         offText: 'Off — answers rely on the model alone (add TAVILY_API_KEY).', onBadge: 'On', offBadge: 'Off', offCls: '' },
-      { icon: '🔐', name: 'Sign-in', on: !!(ps.auth && ps.auth !== 'stub'),
+      { icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>', name: 'Sign-in', on: !!(ps.auth && ps.auth !== 'stub'),
         onText: 'OAuth — sign in with ' + authLabel(ps.auth) + '.',
         offText: 'Demo accounts — no OAuth keys set (stub provider).', onBadge: 'OAuth', offBadge: 'Demo', offCls: 'demo' },
     ];
@@ -2018,7 +2034,9 @@
     const list = mk('div', 'prov-list');
     defs.forEach((d) => {
       const row = mk('div', 'prov-row');
-      row.appendChild(mk('span', 'prov-ico', d.icon));
+      const provIco = mk('span', 'prov-ico');
+      provIco.innerHTML = d.icon;
+      row.appendChild(provIco);
       const main = mk('div', 'prov-main');
       main.appendChild(mk('div', 'prov-name', d.name));
       main.appendChild(mk('p', 'prov-desc', d.on ? d.onText : d.offText));

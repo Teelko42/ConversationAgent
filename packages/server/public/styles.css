@@ -22,64 +22,75 @@
 :root {
   color-scheme: light;
 
+  /* ---- type ------------------------------------------------------------ */
+  /* Space Grotesk (display) + IBM Plex Sans (body): a deliberate, technical
+     grotesk pairing chosen over the default Inter/system stack so headings and
+     numerals carry brand character. The expressive face is reserved for headers,
+     the brand mark, eyebrows and the big stat numerals; body copy stays Plex. */
+  --font-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+
   /* ---- base + elevated surfaces ---------------------------------------- */
-  --bg: #eef1f8; /* soft cool canvas */
-  --surface-1: #ffffff; /* lowest cards / sidebar */
+  /* Warm paper canvas (not the cool blue-tinted white that reads as generic
+     SaaS) over solid surfaces. Values derived in OKLCH for even lightness,
+     shipped as hex so the PiP/clone render path stays bullet-proof. */
+  --bg: #f4f2ec; /* warm paper — oklch(.95 .01 92) */
+  --surface-1: #fbfaf6; /* lowest cards / sidebar */
   --surface-2: #ffffff; /* default card body */
-  --surface-3: #e7ecfb; /* hover / active wells */
+  --surface-3: #efece3; /* hover / active wells */
 
-  /* ---- glass fills (translucent white so the canvas glow shows through) - */
-  --glass: linear-gradient(160deg, rgba(255, 255, 255, 0.92), rgba(247, 249, 255, 0.82));
-  --glass-soft: linear-gradient(160deg, rgba(255, 255, 255, 0.72), rgba(245, 248, 255, 0.6));
-  --glass-raise: linear-gradient(160deg, rgba(255, 255, 255, 0.97), rgba(249, 251, 255, 0.9));
+  /* ---- surface fills (solid — glassmorphism removed) ------------------- */
+  --glass: #ffffff;
+  --glass-soft: #f7f5ef;
+  --glass-raise: #ffffff;
 
-  /* ---- accents --------------------------------------------------------- */
-  --accent: #2f4bda; /* electric blue, deepened so it reads as text on white */
-  --accent-deep: #0d17e7;
-  --accent-grad: linear-gradient(135deg, #5b78ff 0%, #2536e8 100%);
-  --accent-glow: rgba(77, 107, 255, 0.3);
+  /* ---- accents (deep teal primary, terracotta secondary) --------------- */
+  --accent: #0f6e6c; /* deep teal — AA as white-on-fill and as text on paper */
+  --accent-deep: #0a544f;
+  --accent-grad: linear-gradient(160deg, #15807c 0%, #0a544f 100%); /* same-hue, the one brand gradient */
+  --accent-glow: rgba(15, 110, 108, 0.22);
 
-  /* semantic colours deepened so they meet AA contrast as text on light */
-  --cyan: #0e7490; /* used as small citation-link text → needs >=4.5:1 on white */
-  --teal: #0d9488;
-  --violet: #6d3bf5;
-  --red: #e11d48; /* negative / error states */
-  --good: #0f9d6b; /* live / success */
-  --warn: #b45309; /* demo / degraded */
+  /* semantic colours tuned for >=4.5:1 as small text on warm paper */
+  --cyan: #0c6b86; /* citation-link text */
+  --teal: #0e7a6e;
+  --violet: #a8502f; /* repurposed → terracotta: the warm "Aizen AI" accent (not AI-purple) */
+  --red: #c0413f; /* negative / error states */
+  --good: #137a4c; /* live / success (conventional green) */
+  --warn: #a96708; /* demo / degraded (amber) */
 
   /* ---- text ------------------------------------------------------------ */
-  --text: #161a2b;
-  --muted: #4b5168;
-  --muted-2: #6b7188; /* slate-blue gray */
+  --text: #1f1d18; /* warm ink */
+  --muted: #565249;
+  --muted-2: #6e6a5f; /* warm gray */
 
   /* ---- borders --------------------------------------------------------- */
-  --line: rgba(23, 32, 84, 0.1);
-  --line-strong: rgba(23, 32, 84, 0.16);
-  --line-accent: rgba(47, 75, 218, 0.4);
+  --line: rgba(40, 35, 24, 0.12);
+  --line-strong: rgba(40, 35, 24, 0.2);
+  --line-accent: rgba(15, 110, 108, 0.42);
 
-  /* ---- theme-dependent surfaces (chrome, wells, scrollbars, glows) ----- */
-  --grid: rgba(23, 32, 84, 0.045);
-  --sidebar-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(247, 249, 255, 0.86));
-  --topbar-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.6));
-  --well: rgba(23, 32, 84, 0.04);
-  --scrollbar: rgba(23, 32, 84, 0.18);
-  --scrollbar-hover: rgba(23, 32, 84, 0.32);
-  --nav-active-bg: linear-gradient(135deg, rgba(91, 120, 255, 0.16), rgba(47, 75, 218, 0.1));
-  --nav-active-text: #15229e;
-  --scrim: rgba(23, 32, 84, 0.28);
-  --glow-a: rgba(47, 75, 218, 0.1);
-  --glow-b: rgba(120, 70, 255, 0.08);
-  --glow-c: rgba(34, 211, 238, 0.06);
+  /* ---- theme-dependent surfaces (chrome, wells, scrollbars) ------------ */
+  --grid: rgba(40, 35, 24, 0.04);
+  --sidebar-bg: #faf8f2;
+  --topbar-bg: rgba(250, 248, 242, 0.82); /* slight translucency — the one glass moment */
+  --well: rgba(40, 35, 24, 0.045);
+  --scrollbar: rgba(40, 35, 24, 0.2);
+  --scrollbar-hover: rgba(40, 35, 24, 0.34);
+  --nav-active-bg: rgba(15, 110, 108, 0.1);
+  --nav-active-text: #0a544f;
+  --scrim: rgba(31, 29, 24, 0.34);
+  --glow-a: transparent; /* ambient hero glows removed */
+  --glow-b: transparent;
+  --glow-c: transparent;
 
-  /* ---- glow / shadow (soft + neutral on light) ------------------------- */
-  --glow-blue: 0 18px 40px -24px rgba(47, 75, 218, 0.35);
-  --glow-blue-hover: 0 0 0 1px var(--line-accent), 0 22px 50px -24px rgba(47, 75, 218, 0.42);
-  --glow-soft: 0 18px 44px -30px rgba(23, 32, 84, 0.18);
+  /* ---- shadow (tight + neutral; no coloured ambient glow) -------------- */
+  --glow-blue: 0 1px 2px rgba(31, 29, 24, 0.06), 0 8px 20px -14px rgba(31, 29, 24, 0.18);
+  --glow-blue-hover: 0 0 0 1px var(--line-strong), 0 10px 26px -16px rgba(31, 29, 24, 0.22);
+  --glow-soft: 0 1px 2px rgba(31, 29, 24, 0.05), 0 6px 16px -12px rgba(31, 29, 24, 0.12);
 
-  /* ---- radii ----------------------------------------------------------- */
-  --r-lg: 24px;
-  --r-md: 18px;
-  --r-sm: 12px;
+  /* ---- radii (de-bubbled — intentional, not default-rounded) ----------- */
+  --r-lg: 14px;
+  --r-md: 11px;
+  --r-sm: 8px;
   --r-pill: 999px;
 
   /* ---- spacing rhythm -------------------------------------------------- */
@@ -103,51 +114,52 @@
 html[data-theme="dark"] {
   color-scheme: dark;
 
-  --bg: #050610;
-  --surface-1: #0b1024;
-  --surface-2: #10162f;
-  --surface-3: #131c58;
+  /* warm charcoal — not the cool near-black blue that reads as generic dark SaaS */
+  --bg: #16140f;
+  --surface-1: #1d1a14;
+  --surface-2: #221e17;
+  --surface-3: #2c271d;
 
-  --glass: linear-gradient(160deg, rgba(20, 28, 62, 0.72), rgba(10, 15, 33, 0.62));
-  --glass-soft: linear-gradient(160deg, rgba(17, 24, 53, 0.55), rgba(9, 13, 30, 0.5));
-  --glass-raise: linear-gradient(160deg, rgba(26, 36, 78, 0.85), rgba(13, 19, 44, 0.78));
+  --glass: #221e17;
+  --glass-soft: #1d1a14;
+  --glass-raise: #2a251c;
 
-  --accent: #4d6bff;
-  --accent-deep: #0d17e7;
-  --accent-grad: linear-gradient(135deg, #5b78ff 0%, #0d17e7 100%);
-  --accent-glow: rgba(77, 107, 255, 0.55);
+  --accent: #3fb6a6; /* brighter teal for dark */
+  --accent-deep: #2a8f82;
+  --accent-grad: linear-gradient(160deg, #46c2b1 0%, #2a8f82 100%);
+  --accent-glow: rgba(63, 182, 166, 0.3);
 
-  --cyan: #22d3ee;
-  --teal: #2dd4bf;
-  --violet: #9d7bff;
-  --red: #ff5d7a;
-  --good: #35e0a1;
-  --warn: #f5b544;
+  --cyan: #4fb8d4;
+  --teal: #43c2a8;
+  --violet: #d98a5c; /* terracotta/amber on dark */
+  --red: #ef6b62;
+  --good: #3fc27e;
+  --warn: #e0a13c;
 
-  --text: #eaecf6;
-  --muted: #b2b5ca;
-  --muted-2: #7a80a3;
+  --text: #efe9dd; /* warm off-white */
+  --muted: #bdb6a6;
+  --muted-2: #8f897b;
 
-  --line: rgba(178, 181, 202, 0.1);
-  --line-strong: rgba(178, 181, 202, 0.18);
-  --line-accent: rgba(77, 107, 255, 0.35);
+  --line: rgba(220, 210, 190, 0.12);
+  --line-strong: rgba(220, 210, 190, 0.2);
+  --line-accent: rgba(63, 182, 166, 0.4);
 
-  --grid: rgba(178, 181, 202, 0.05);
-  --sidebar-bg: linear-gradient(180deg, rgba(11, 16, 36, 0.92), rgba(7, 10, 24, 0.88));
-  --topbar-bg: linear-gradient(180deg, rgba(8, 11, 26, 0.82), rgba(8, 11, 26, 0.52));
-  --well: rgba(178, 181, 202, 0.04);
-  --scrollbar: rgba(178, 181, 202, 0.16);
-  --scrollbar-hover: rgba(178, 181, 202, 0.3);
-  --nav-active-bg: linear-gradient(135deg, rgba(91, 120, 255, 0.28), rgba(13, 23, 231, 0.18));
-  --nav-active-text: #fff;
-  --scrim: rgba(3, 5, 14, 0.6);
-  --glow-a: rgba(45, 70, 255, 0.22);
-  --glow-b: rgba(120, 70, 255, 0.16);
-  --glow-c: rgba(34, 211, 238, 0.1);
+  --grid: rgba(220, 210, 190, 0.04);
+  --sidebar-bg: #1b1812;
+  --topbar-bg: rgba(27, 24, 18, 0.82);
+  --well: rgba(220, 210, 190, 0.05);
+  --scrollbar: rgba(220, 210, 190, 0.16);
+  --scrollbar-hover: rgba(220, 210, 190, 0.3);
+  --nav-active-bg: rgba(63, 182, 166, 0.16);
+  --nav-active-text: #eafffb;
+  --scrim: rgba(8, 7, 5, 0.62);
+  --glow-a: transparent;
+  --glow-b: transparent;
+  --glow-c: transparent;
 
-  --glow-blue: 0 18px 50px -22px rgba(45, 70, 255, 0.55);
-  --glow-blue-hover: 0 0 0 1px var(--line-accent), 0 22px 60px -20px rgba(60, 90, 255, 0.7);
-  --glow-soft: 0 24px 60px -34px rgba(0, 0, 0, 0.85);
+  --glow-blue: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 26px -16px rgba(0, 0, 0, 0.6);
+  --glow-blue-hover: 0 0 0 1px var(--line-strong), 0 12px 30px -16px rgba(0, 0, 0, 0.7);
+  --glow-soft: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 20px -14px rgba(0, 0, 0, 0.5);
 }
 
 * {
@@ -161,18 +173,29 @@ html {
 body {
   margin: 0;
   min-height: 100vh;
-  font: 15px/1.6 "Inter", -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font: 15px/1.6 var(--font-body);
   background: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
+/* Display face is reserved for headers, the brand, eyebrows and big numerals —
+   never body copy (per type-pairing best practice). */
+h1,
+h2,
+h3,
+.brand-name,
+.card-eyebrow,
+.stat-value,
+.stat-label {
+  font-family: var(--font-display);
+}
 h1,
 h2,
 h3 {
   margin: 0;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
 }
 
 a {
@@ -183,36 +206,14 @@ a {
 /* =========================================================================
    Atmospheric background — radial glows + faded grid + noise. Fixed layer.
    ========================================================================= */
+/* Flat, calm canvas. The ambient radial glows + faded grid + film-grain stack
+   was a core "AI look" tell and hurt readability behind the text panels, so it
+   is gone — just the warm paper colour remains. */
 .app-bg {
   position: fixed;
   inset: 0;
   z-index: -2;
-  background:
-    radial-gradient(900px 600px at 8% -8%, var(--glow-a), transparent 60%),
-    radial-gradient(800px 520px at 100% 0%, var(--glow-b), transparent 55%),
-    radial-gradient(900px 700px at 50% 115%, var(--glow-c), transparent 60%),
-    var(--bg);
-}
-.app-bg::before {
-  /* faint dashboard grid, masked to fade toward the edges */
-  content: "";
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(var(--grid) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
-  background-size: 58px 58px;
-  -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, #000 30%, transparent 78%);
-  mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, #000 30%, transparent 78%);
-}
-.app-bg::after {
-  /* very subtle film grain to kill banding on the gradients */
-  content: "";
-  position: absolute;
-  inset: 0;
-  opacity: 0.04;
-  mix-blend-mode: overlay;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background: var(--bg);
 }
 
 /* =========================================================================
@@ -244,7 +245,6 @@ a {
   padding: 22px 16px;
   background: var(--sidebar-bg);
   border-right: 1px solid var(--line);
-  backdrop-filter: blur(18px);
   z-index: 30;
 }
 
@@ -336,7 +336,7 @@ a {
 }
 .nav-item:hover {
   color: var(--text);
-  background: rgba(77, 107, 255, 0.08);
+  background: rgba(15, 110, 108, 0.08);
   border-color: var(--line);
 }
 .nav-item:hover .nav-ico {
@@ -409,7 +409,7 @@ a {
   padding: 14px 26px;
   background: var(--topbar-bg);
   border-bottom: 1px solid var(--line);
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(8px);
 }
 .page-title h1 {
   font-size: 20px;
@@ -436,7 +436,7 @@ a {
   gap: 8px;
   padding: 0 12px;
   height: 40px;
-  border-radius: var(--r-pill);
+  border-radius: var(--r-sm);
   background: var(--glass-soft);
   border: 1px solid var(--line);
   color: var(--muted-2);
@@ -444,7 +444,7 @@ a {
 }
 .search:focus-within {
   border-color: var(--line-accent);
-  box-shadow: 0 0 0 3px rgba(77, 107, 255, 0.18);
+  box-shadow: 0 0 0 3px rgba(15, 110, 108, 0.18);
 }
 .search input {
   border: 0;
@@ -503,7 +503,7 @@ a {
   font-size: 12px;
   font-weight: 700;
   color: #fff;
-  background: linear-gradient(135deg, var(--violet), var(--accent-deep));
+  background: var(--accent);
   border: 1px solid var(--line-strong);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
 }
@@ -517,7 +517,7 @@ a {
   gap: 7px;
   height: 40px;
   padding: 0 16px;
-  border-radius: var(--r-pill);
+  border-radius: var(--r-sm);
   border: 1px solid transparent;
   font: inherit;
   font-size: 13.5px;
@@ -529,8 +529,14 @@ a {
     border-color 0.18s ease, color 0.18s ease, opacity 0.18s ease;
 }
 .btn .btn-ico {
+  display: inline-flex;
+  align-items: center;
   font-size: 14px;
   line-height: 1;
+}
+.btn .btn-ico svg {
+  width: 16px;
+  height: 16px;
 }
 .btn:active {
   transform: translateY(1px);
@@ -538,12 +544,11 @@ a {
 
 .btn-primary {
   color: #fff;
-  background: var(--accent-grad);
-  box-shadow: 0 10px 30px -12px var(--accent-glow), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  background: var(--accent);
+  box-shadow: 0 1px 2px rgba(31, 29, 24, 0.12);
 }
 .btn-primary:hover:not(:disabled) {
-  box-shadow: 0 14px 38px -10px var(--accent-glow), inset 0 1px 0 rgba(255, 255, 255, 0.3);
-  filter: brightness(1.06);
+  background: var(--accent-deep);
 }
 
 .btn-secondary {
@@ -554,7 +559,7 @@ a {
 .btn-secondary:hover:not(:disabled) {
   color: var(--text);
   border-color: var(--line-accent);
-  background: rgba(77, 107, 255, 0.1);
+  background: rgba(15, 110, 108, 0.1);
   box-shadow: 0 0 0 1px var(--line-accent);
 }
 
@@ -597,7 +602,7 @@ a {
 }
 .icon-btn:hover {
   border-color: var(--line-accent);
-  background: rgba(77, 107, 255, 0.1);
+  background: rgba(15, 110, 108, 0.1);
 }
 
 /* Theme toggle — an icon-only pill. The sun/moon glyphs swap purely in CSS off
@@ -663,15 +668,8 @@ main {
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 .stat-card::before {
-  /* soft top glow */
-  content: "";
-  position: absolute;
-  top: -40%;
-  right: -10%;
-  width: 60%;
-  height: 80%;
-  background: radial-gradient(circle, rgba(77, 107, 255, 0.16), transparent 70%);
-  pointer-events: none;
+  /* per-card ambient glow removed (AI-look tell) */
+  display: none;
 }
 .stat-card:hover {
   transform: translateY(-2px);
@@ -697,20 +695,20 @@ main {
   width: 30px;
   height: 30px;
   border-radius: 9px;
-  background: rgba(77, 107, 255, 0.12);
+  background: rgba(15, 110, 108, 0.12);
   border: 1px solid var(--line);
 }
 .ico-blue {
   color: var(--accent);
-  background: rgba(77, 107, 255, 0.14);
+  background: rgba(15, 110, 108, 0.14);
 }
 .ico-cyan {
   color: var(--cyan);
-  background: rgba(34, 211, 238, 0.12);
+  background: rgba(12, 107, 134, 0.12);
 }
 .ico-violet {
   color: var(--violet);
-  background: rgba(157, 123, 255, 0.14);
+  background: rgba(168, 80, 47, 0.14);
 }
 .ico-teal {
   color: var(--teal);
@@ -825,7 +823,6 @@ main {
   height: 7px;
   border-radius: 50%;
   background: var(--good);
-  box-shadow: 0 0 10px 1px var(--good);
   animation: pulse 1.8s ease-in-out infinite;
 }
 @keyframes pulse {
@@ -841,8 +838,8 @@ main {
 }
 .ai-badge {
   color: var(--violet);
-  border-color: rgba(157, 123, 255, 0.3);
-  background: rgba(157, 123, 255, 0.08);
+  border-color: rgba(168, 80, 47, 0.3);
+  background: rgba(168, 80, 47, 0.08);
 }
 
 /* =========================================================================
@@ -903,12 +900,12 @@ main {
 }
 .line.clickable:hover {
   border-color: var(--line-accent);
-  background: rgba(77, 107, 255, 0.07);
+  background: rgba(15, 110, 108, 0.07);
   box-shadow: 0 0 0 1px var(--line-accent), var(--glow-blue);
 }
 .line.selected {
   border-color: var(--line-accent);
-  background: linear-gradient(160deg, rgba(77, 107, 255, 0.16), rgba(13, 23, 231, 0.06));
+  background: linear-gradient(160deg, rgba(15, 110, 108, 0.16), rgba(10, 84, 79, 0.06));
   box-shadow: inset 3px 0 0 var(--accent), 0 0 0 1px var(--line-accent);
 }
 
@@ -943,7 +940,7 @@ main {
   padding: 3px 9px;
   border-radius: var(--r-pill);
   border: 1px solid var(--line);
-  background: rgba(34, 211, 238, 0.07);
+  background: rgba(12, 107, 134, 0.07);
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -951,8 +948,8 @@ main {
   transition: border-color 0.16s ease, background 0.16s ease;
 }
 .inline-answer .ia-src a:hover {
-  border-color: rgba(34, 211, 238, 0.4);
-  background: rgba(34, 211, 238, 0.14);
+  border-color: rgba(12, 107, 134, 0.4);
+  background: rgba(12, 107, 134, 0.14);
 }
 
 /* ---- explanation panel ------------------------------------------------- */
@@ -1020,7 +1017,7 @@ main {
   margin: 0;
   padding: 12px 13px;
   border-radius: var(--r-sm);
-  background: linear-gradient(160deg, rgba(77, 107, 255, 0.12), rgba(13, 23, 231, 0.05));
+  background: linear-gradient(160deg, rgba(15, 110, 108, 0.12), rgba(10, 84, 79, 0.05));
   border: 1px solid var(--line-accent);
 }
 .explain .answer.muted {
@@ -1042,7 +1039,7 @@ main {
   padding: 4px 11px;
   border-radius: var(--r-pill);
   border: 1px solid var(--line);
-  background: rgba(34, 211, 238, 0.07);
+  background: rgba(12, 107, 134, 0.07);
   max-width: 240px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1050,8 +1047,8 @@ main {
   transition: border-color 0.16s ease, background 0.16s ease;
 }
 .explain .src a:hover {
-  border-color: rgba(34, 211, 238, 0.4);
-  background: rgba(34, 211, 238, 0.14);
+  border-color: rgba(12, 107, 134, 0.4);
+  background: rgba(12, 107, 134, 0.14);
 }
 
 /* Non-link citation chip for the asker's own grounding (Obsidian / file / pasted
@@ -1072,15 +1069,24 @@ main {
   color: var(--muted);
   background: var(--glass, transparent);
 }
+.src-chip-ico {
+  display: inline-flex;
+  vertical-align: -2px;
+  margin-right: 5px;
+}
+.src-chip-ico svg {
+  width: 12px;
+  height: 12px;
+}
 .src-chip-obsidian {
-  color: #a78bfa;
-  border-color: rgba(167, 139, 250, 0.35);
-  background: rgba(167, 139, 250, 0.08);
+  color: var(--violet);
+  border-color: rgba(168, 80, 47, 0.35);
+  background: rgba(168, 80, 47, 0.08);
 }
 .src-chip-file {
   color: var(--accent);
-  border-color: rgba(77, 107, 255, 0.3);
-  background: rgba(77, 107, 255, 0.07);
+  border-color: rgba(15, 110, 108, 0.3);
+  background: rgba(15, 110, 108, 0.07);
 }
 .explain .degraded {
   margin: 14px 0 0;
@@ -1159,7 +1165,7 @@ main {
   padding: 3px 9px;
   border-radius: var(--r-pill);
   border: 1px solid var(--line);
-  background: rgba(34, 211, 238, 0.07);
+  background: rgba(12, 107, 134, 0.07);
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1167,8 +1173,8 @@ main {
   transition: border-color 0.16s ease, background 0.16s ease;
 }
 .fu-a .ia-src a:hover {
-  border-color: rgba(34, 211, 238, 0.4);
-  background: rgba(34, 211, 238, 0.14);
+  border-color: rgba(12, 107, 134, 0.4);
+  background: rgba(12, 107, 134, 0.14);
 }
 .fu-a .degraded {
   margin: 10px 0 0;
@@ -1204,7 +1210,7 @@ main {
 }
 .followup-input:focus {
   border-color: var(--line-accent);
-  box-shadow: 0 0 0 3px rgba(77, 107, 255, 0.18);
+  box-shadow: 0 0 0 3px rgba(15, 110, 108, 0.18);
 }
 .followup-input:disabled {
   opacity: 0.55;
@@ -1220,7 +1226,7 @@ main {
 .popout-btn.active {
   border-color: var(--line-accent);
   color: var(--accent);
-  background: rgba(77, 107, 255, 0.12);
+  background: rgba(15, 110, 108, 0.12);
 }
 
 /* The PiP document's <body> gets this class: a compact, full-bleed stack of the
@@ -1510,8 +1516,7 @@ body.nav-open .nav-backdrop {
   background: var(--glass-raise, var(--panel));
   border: 1px solid var(--line-strong);
   border-radius: var(--r-md);
-  box-shadow: 0 18px 48px -16px rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 28px -14px rgba(31, 29, 24, 0.32);
 }
 .acct-menu[hidden],
 .acct-panel[hidden],
@@ -1759,10 +1764,15 @@ body.nav-open .nav-backdrop {
   background: var(--glass, transparent);
 }
 .prov-ico {
-  font-size: 18px;
-  line-height: 1.1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 22px;
-  text-align: center;
+  color: var(--muted);
+}
+.prov-ico svg {
+  width: 18px;
+  height: 18px;
 }
 .prov-main {
   flex: 1;
@@ -1832,7 +1842,7 @@ body.nav-open .nav-backdrop {
   font-weight: 700;
 }
 .plan-table tr.current td {
-  background: var(--nav-active-bg, rgba(77, 107, 255, 0.12));
+  background: var(--nav-active-bg, rgba(15, 110, 108, 0.12));
 }
 .plan-cap {
   font-variant-numeric: tabular-nums;
