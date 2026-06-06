@@ -5,13 +5,14 @@ import type { WebSearchProvider } from '@aizen/research';
 import { explainSentence, looksLikeQuestion, pickKeyWords } from './explain.js';
 
 /**
- * Provider that answers the explain call with JSON, and (when it sees the answer
- * prompt) the grounded-answer call with JSON. Branches on a marker in the prompt.
+ * Provider that answers the explain call with JSON (structured breakdown), and the
+ * grounded-answer call with PLAIN TEXT (the answer streams, so it is no longer JSON).
+ * Branches on a marker in the prompt.
  */
 class ScriptedProvider implements LlmProvider {
   async complete(req: CompletionRequest) {
     const text = req.prompt.includes('Use ONLY these web sources')
-      ? '{"answer":"Paris is the capital of France."}'
+      ? 'Paris is the capital of France.'
       : '{"explanation":"It asks for the capital city of France.",' +
         '"breakdown":[{"word":"capital","meaning":"the seat of government"}],' +
         '"is_question":true,"search_query":"capital of France"}';
@@ -77,7 +78,7 @@ describe('explainSentence (P2 sentence explain engine)', () => {
       {
         complete: async (req: CompletionRequest) => ({
           text: req.prompt.includes('Use ONLY these web sources')
-            ? '{"answer":"unknown"}'
+            ? 'unknown'
             : '{"explanation":"x","breakdown":[],"is_question":true,"search_query":"q"}',
           usage: { inputTokens: 1, outputTokens: 1 },
         }),
@@ -101,7 +102,7 @@ class UserGroundedProvider implements LlmProvider {
     this.prompts.push(req.prompt);
     const text = req.prompt.includes('"breakdown"')
       ? '{"explanation":"asks when Project X ships","breakdown":[],"is_question":true,"search_query":"project x ship date"}'
-      : '{"answer":"Project X ships in Q4 per the brief."}';
+      : 'Project X ships in Q4 per the brief.'; // plain-text answer (streams)
     return { text, usage: { inputTokens: 10, outputTokens: 10 } };
   }
 }
@@ -125,7 +126,9 @@ describe('explainSentence with user-provided sources (F2 — BYO sources)', () =
     expect(out.sources[0]).toMatchObject({ type: 'user' });
     expect(out.sources[0]!.url).toBeUndefined(); // no url provided → no link
     // the answer prompt carried the user block verbatim.
-    const answerPrompt = provider.prompts.find((p) => p.includes('"answer"') && !p.includes('"breakdown"'))!;
+    const answerPrompt = provider.prompts.find(
+      (p) => p.includes('Answer in plain text') && !p.includes('"breakdown"'),
+    )!;
     expect(answerPrompt).toContain('Provided by the user');
     expect(answerPrompt).toContain('Project X ships in Q4.');
   });
@@ -182,6 +185,42 @@ describe('explainSentence with user-provided sources (F2 — BYO sources)', () =
     );
     const plainPrompt = noSrc.prompts.find((p) => p.includes('"breakdown"'))!;
     expect(plainPrompt).not.toContain('connected their own notes');
+  });
+});
+
+describe('explainSentence with live transcript context (split-by-pause)', () => {
+  it('folds the surrounding transcript into BOTH the explain and answer prompts', async () => {
+    const provider = new UserGroundedProvider();
+    const out = await explainSentence(
+      { ...input, text: 'What did they report?' }, // a fragment split from its setup line
+      new LlmGateway(provider, new CostMeter({ tenantCeilingUsd: 10, opusCallCap: 4 })),
+      { research, transcript: ['Turning to revenue for the quarter.', 'What did they report?'] },
+    );
+    expect(() => SentenceExplanationSchema.parse(out)).not.toThrow();
+
+    // Hop 1 (explain/breakdown/classify) sees the neighbouring line for context…
+    const explainPrompt = provider.prompts.find((p) => p.includes('"breakdown"'))!;
+    expect(explainPrompt).toContain('Recent conversation for context');
+    expect(explainPrompt).toContain('Turning to revenue for the quarter.');
+
+    // …and so does the grounded-answer hop (to resolve what the question refers to).
+    const answerPrompt = provider.prompts.find(
+      (p) => p.includes('Answer in plain text') && !p.includes('"breakdown"'),
+    )!;
+    expect(answerPrompt).toContain('Recent conversation for context');
+    expect(answerPrompt).toContain('Turning to revenue for the quarter.');
+    // The answer is still grounded ONLY in the sources, not the transcript.
+    expect(answerPrompt).toContain('not as a source for the answer');
+  });
+
+  it('leaves both prompts byte-for-byte unchanged when no transcript is supplied', async () => {
+    const provider = new UserGroundedProvider();
+    await explainSentence(
+      { ...input, text: 'What did they report?' },
+      new LlmGateway(provider, new CostMeter({ tenantCeilingUsd: 10, opusCallCap: 4 })),
+      { research }, // no transcript
+    );
+    for (const p of provider.prompts) expect(p).not.toContain('Recent conversation for context');
   });
 });
 

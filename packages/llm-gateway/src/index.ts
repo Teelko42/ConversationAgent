@@ -138,13 +138,44 @@ export interface CompletionResult {
   text: string;
   usage: TokenUsage;
 }
+/**
+ * Callbacks for a STREAMED completion (the hot user-facing answer hop). A provider
+ * that streams emits each text fragment via `onDelta` as it is produced, and may be
+ * cancelled via `signal` (e.g. a speculative answer that turned out unwanted).
+ */
+export interface StreamHandlers {
+  onDelta?: (text: string) => void;
+  signal?: AbortSignal;
+}
 export interface LlmProvider {
   complete(req: CompletionRequest): Promise<CompletionResult>;
+  /**
+   * Optional streaming variant. When present, the gateway prefers it for hot
+   * user-facing text so tokens reach the browser as they are produced. A provider
+   * WITHOUT it (e.g. the deterministic `StubProvider`) is still fully usable — the
+   * gateway falls back to `complete()` and simply emits no deltas, so demo mode
+   * never streams the stub's marker text to the UI.
+   */
+  completeStream?(req: CompletionRequest, handlers: StreamHandlers): Promise<CompletionResult>;
 }
+
+/** The deterministic stub's reply marker (see `StubProvider`). */
+const STUB_REPLY_PREFIX = '[stub:';
+/**
+ * True when `text` is the `StubProvider`'s canned reply rather than a real model
+ * answer. The hot answer path emits PLAIN TEXT (so it can stream token-by-token),
+ * so it can no longer detect "no real model" by a failed JSON parse — it asks this
+ * instead, and degrades (answer:null) when true. Deliberately NOT keyed on
+ * "did the provider stream", so a real non-streaming provider still answers.
+ */
+export function isStubReply(text: string): boolean {
+  return typeof text === 'string' && text.startsWith(STUB_REPLY_PREFIX);
+}
+
 export class StubProvider implements LlmProvider {
   async complete(req: CompletionRequest): Promise<CompletionResult> {
     return {
-      text: `[stub:${req.tier}] ${req.prompt.slice(0, 24)}`,
+      text: `${STUB_REPLY_PREFIX}${req.tier}] ${req.prompt.slice(0, 24)}`,
       usage: {
         inputTokens: req.estInputTokens ?? 100,
         outputTokens: req.estOutputTokens ?? 50,
@@ -152,6 +183,8 @@ export class StubProvider implements LlmProvider {
       },
     };
   }
+  // Intentionally NO `completeStream` — the gateway falls back to `complete()` for
+  // the stub, so demo mode degrades cleanly (no deltas, no marker text on screen).
 }
 
 // ---------------------------------------------------------------------------
@@ -191,6 +224,42 @@ export class LlmGateway {
     });
     const cost = this.meter.record(tier, res.usage);
     return { ok: true, tier, text: res.text, usage: res.usage, costUsd: cost };
+  }
+
+  /**
+   * Streaming sibling of `invoke`: same routing + cost ceilings, but the provider's
+   * tokens are surfaced through `handlers.onDelta` as they arrive (the latency lever
+   * — the browser renders the answer while it is still being written). Falls back to
+   * a non-streaming `complete()` when the provider can't stream (the stub), emitting
+   * no deltas. NEVER throws — an intentional abort or any provider error degrades to
+   * `{ ok:false }`, so a half-streamed answer always has a clean terminal result.
+   */
+  async invokeStream(task: InvokeTask, handlers: StreamHandlers = {}): Promise<InvokeResult> {
+    const tier = clampTier(routeTier(task.kind), task.tierCap);
+    const guard = this.meter.canInvoke(tier);
+    if (!guard.ok) {
+      return { ok: false, degraded: true, tier, reason: guard.reason! };
+    }
+    const req: CompletionRequest = {
+      tier,
+      prompt: task.prompt,
+      estInputTokens: task.estInputTokens,
+      estOutputTokens: task.estOutputTokens,
+      cachedInputTokens: task.cachedInputTokens,
+    };
+    try {
+      const res = this.provider.completeStream
+        ? await this.provider.completeStream(req, handlers)
+        : await this.provider.complete(req); // no streaming → no deltas (e.g. stub)
+      const cost = this.meter.record(tier, res.usage);
+      return { ok: true, tier, text: res.text, usage: res.usage, costUsd: cost };
+    } catch (err) {
+      // Includes an intentional abort (signal) and any provider/network error.
+      const aborted =
+        (err as { name?: string })?.name === 'AbortError' ||
+        (err as { name?: string })?.name === 'APIUserAbortError';
+      return { ok: false, degraded: true, tier, reason: aborted ? 'aborted' : 'stream_error' };
+    }
   }
 }
 

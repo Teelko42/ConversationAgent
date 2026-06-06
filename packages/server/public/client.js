@@ -95,6 +95,13 @@
   let askSeq = 0; // monotonic counter → unique ask_id per follow-up (match reply→thread)
   const FOLLOWUP_UI_TIMEOUT_MS = 45000; // client-side backstop so a follow-up never spins forever
 
+  // Streaming (#1): live DOM nodes we append answer deltas into, so a streamed answer
+  // updates IN PLACE instead of re-rendering the whole panel/thread once per token.
+  let streamAnswerNode = null; // the explain panel's answer <p> currently streaming
+  let streamAnswerSeg = null; // its segment_id
+  let streamFuNode = null; // the follow-up thread's answer <p> currently streaming
+  let streamFuAsk = null; // its ask_id
+
   function isF02(env) {
     return env && Object.prototype.hasOwnProperty.call(env, 'message_type');
   }
@@ -128,6 +135,19 @@
     }
   }
 
+  // The recent FINAL transcript lines (oldest→newest), capped to bound frame size.
+  // Shipped as conversation context with an explain/ask so the engine can read a
+  // sentence that a long pause split across lines together with its neighbours — and
+  // so that context survives a WS reconnect (a fresh server session's buffer starts
+  // empty; the browser keeps the whole transcript).
+  function recentTranscript() {
+    const lines = [];
+    for (const line of model.transcript.values()) {
+      if (line.is_final && line.text) lines.push(line.text);
+    }
+    return lines.slice(-12);
+  }
+
   // Ask the server to explain a sentence, at most once per segment. Used by both
   // the auto-answer path (final questions) and a manual click (any final line).
   function requestExplain(id, text) {
@@ -135,8 +155,17 @@
     requested.add(id);
     model.explanations.set(id, { state: 'loading' });
     if (ws.readyState === WebSocket.OPEN) {
-      // The "current query" for retrieval (S0) is the sentence being explained.
-      ws.send(JSON.stringify({ type: 'explain', segment_id: id, text, user_sources: userSourcesForSend(text) }));
+      // The "current query" for retrieval (S0) is the sentence being explained;
+      // `transcript` is the surrounding live conversation (split-by-pause context).
+      ws.send(
+        JSON.stringify({
+          type: 'explain',
+          segment_id: id,
+          text,
+          transcript: recentTranscript(),
+          user_sources: userSourcesForSend(text),
+        }),
+      );
     }
   }
 
@@ -781,6 +810,20 @@
       box.textContent = 'Answering…';
       return box;
     }
+    // Streaming (#1): show the explanation's meaning / the answer accumulated so far.
+    if (state.state === 'streaming' && state.ex) {
+      const p = document.createElement('p');
+      p.className = 'ia-answer';
+      if (state.ex.is_question) {
+        const live = state.answerText || '';
+        p.textContent = live || 'Answering…';
+        if (!live) p.classList.add('muted');
+      } else {
+        p.textContent = state.ex.explanation;
+      }
+      box.appendChild(p);
+      return box;
+    }
     const ex = state.ex;
     if (!ex) {
       box.classList.add('muted');
@@ -823,6 +866,10 @@
     const exState = model.explanations.get(id);
     if (exState && exState.state === 'done') {
       renderExplanation(exState.ex);
+    } else if (exState && exState.state === 'streaming' && exState.ex) {
+      renderExplanation(exState.ex, { streaming: true, answerText: exState.answerText || '' });
+    } else if (exState && exState.state === 'loading') {
+      showExplanationLoading(line.text);
     } else {
       showExplanationLoading(line.text);
       requestExplain(id, line.text);
@@ -865,8 +912,20 @@
     scrollExplanation('top');
   }
 
-  function renderExplanation(ex) {
+  // `opts.streaming` renders the in-progress view (#1): the answer shows the text
+  // accumulated so far (`opts.answerText`) and its <p> is cached in `streamAnswerNode`
+  // so later deltas update it in place; sources, the degraded note, and the
+  // scroll-to-top are deferred to the final (non-streaming) render.
+  function renderExplanation(ex, opts) {
     if (!ex || ex.segment_id !== selected) return; // ignore stale/late replies
+    opts = opts || {};
+    const streaming = !!opts.streaming;
+    // A fresh render replaces the panel, so any previously-cached streaming node is
+    // gone — drop the reference (re-set below if THIS render is itself streaming).
+    if (streamAnswerSeg === ex.segment_id) {
+      streamAnswerNode = null;
+      streamAnswerSeg = null;
+    }
     els.explanation.innerHTML = '';
     const div = document.createElement('div');
     div.className = 'explain';
@@ -905,14 +964,24 @@
       div.appendChild(h);
       const ans = document.createElement('p');
       ans.className = 'answer';
-      ans.textContent = ex.answer || 'No confident answer found from the web sources.';
-      if (!ex.answer) ans.classList.add('muted');
+      const live = opts.answerText || '';
+      if (streaming) {
+        ans.textContent = live || 'Answering…';
+        if (!live) ans.classList.add('muted');
+        streamAnswerNode = ans; // later deltas update this node directly
+        streamAnswerSeg = ex.segment_id;
+      } else {
+        // Final: keep the streamed text if the final result lacks one (degraded).
+        const finalText = ex.answer || live;
+        ans.textContent = finalText || 'No confident answer found from the web sources.';
+        if (!finalText) ans.classList.add('muted');
+      }
       div.appendChild(ans);
 
-      div.appendChild(buildSourceRow(ex.sources, 'src', 3));
+      if (!streaming) div.appendChild(buildSourceRow(ex.sources, 'src', 3));
     }
 
-    if (ex.state === 'degraded') {
+    if (!streaming && ex.state === 'degraded') {
       const note = document.createElement('p');
       note.className = 'degraded';
       note.textContent =
@@ -921,7 +990,23 @@
     }
 
     els.explanation.appendChild(div);
-    scrollExplanation('top');
+    if (!streaming) scrollExplanation('top'); // don't fight the reader while tokens stream
+  }
+
+  // Apply a streamed answer fragment to the explain panel (#1). Updates the cached
+  // answer node in place when it's the selected sentence; otherwise just accumulates.
+  function applyExplainAnswerDelta(segmentId, text) {
+    const st = model.explanations.get(segmentId);
+    if (!st) return;
+    st.answerText = (st.answerText || '') + (text || '');
+    if (st.state !== 'done') st.state = 'streaming';
+    if (segmentId !== selected || !st.ex) return;
+    if (streamAnswerNode && streamAnswerSeg === segmentId && st.ex.is_question) {
+      streamAnswerNode.classList.remove('muted');
+      streamAnswerNode.textContent = st.answerText;
+    } else {
+      renderExplanation(st.ex, { streaming: true, answerText: st.answerText });
+    }
   }
 
   function renderExplainError(segmentId, message) {
@@ -982,6 +1067,16 @@
       if (fu.state === 'loading') {
         a.classList.add('muted');
         a.textContent = 'Answering…';
+      } else if (fu.state === 'streaming') {
+        // (#1) the answer accumulated so far; its <p> is cached so deltas update in place.
+        const p = document.createElement('p');
+        p.className = 'fu-answer';
+        const live = fu._streamText || '';
+        p.textContent = live || 'Answering…';
+        if (!live) p.classList.add('muted');
+        a.appendChild(p);
+        streamFuNode = p;
+        streamFuAsk = fu.ask_id;
       } else if (fu.state === 'error') {
         a.classList.add('muted');
         a.textContent = 'Could not answer: ' + (fu.error || 'unknown error');
@@ -989,8 +1084,11 @@
         const ans = fu.answer || {};
         const p = document.createElement('p');
         p.className = 'fu-answer';
-        if (ans.answer) {
-          p.textContent = ans.answer;
+        // Prefer the final answer; if it has none but degraded mid-stream, keep the
+        // text we already streamed rather than retracting it.
+        const finalText = ans.answer || (ans.state === 'degraded' ? fu._streamText || '' : '');
+        if (finalText) {
+          p.textContent = finalText;
         } else {
           p.textContent = 'No confident answer found.';
           p.classList.add('muted');
@@ -1024,11 +1122,7 @@
   function followupContext(segmentId) {
     const about = model.transcript.get(segmentId);
     const sentence = about && about.is_final ? about.text : '';
-    const transcript = [];
-    for (const line of model.transcript.values()) {
-      if (line.is_final && line.text) transcript.push(line.text);
-    }
-    return { sentence, transcript: transcript.slice(-12) }; // cap to bound frame size
+    return { sentence, transcript: recentTranscript() }; // shared, capped to bound frame size
   }
 
   function submitFollowup() {
@@ -1090,14 +1184,38 @@
   function failPendingFollowups(message) {
     let changed = false;
     for (const fu of model.followups) {
-      if (fu.state === 'loading') {
+      if (fu.state === 'loading' || fu.state === 'streaming') {
         clearFollowupTimer(fu);
         fu.state = 'error';
         fu.error = message;
+        if (streamFuAsk === fu.ask_id) {
+          streamFuNode = null;
+          streamFuAsk = null;
+        }
         changed = true;
       }
     }
     if (changed) renderFollowups();
+  }
+
+  // Apply a streamed follow-up answer fragment (#1). Updates the cached <p> in place
+  // once it exists; the first delta flips 'loading'→'streaming' and rebuilds once so
+  // the node (and its cache ref) are created.
+  function applyAnswerDelta(askId, text) {
+    const fu = model.followups.find((f) => f.ask_id === askId);
+    if (!fu || fu.state === 'done' || fu.state === 'error') return;
+    fu._streamText = (fu._streamText || '') + (text || '');
+    if (fu.state !== 'streaming') {
+      fu.state = 'streaming';
+      renderFollowups(); // creates the streaming <p> + caches streamFuNode
+      return;
+    }
+    if (streamFuNode && streamFuAsk === askId) {
+      streamFuNode.classList.remove('muted');
+      streamFuNode.textContent = fu._streamText;
+    } else {
+      renderFollowups();
+    }
   }
 
   function applyAnswer(askId, answer) {
@@ -1106,6 +1224,10 @@
     clearFollowupTimer(fu);
     fu.state = 'done';
     fu.answer = answer; // a FollowupAnswer {answer, sources, state, ...}
+    if (streamFuAsk === askId) {
+      streamFuNode = null;
+      streamFuAsk = null;
+    }
     renderFollowups();
     refreshFocusData(); // a follow-up's sources may add to an open Sources popup
   }
@@ -1116,6 +1238,10 @@
     clearFollowupTimer(fu);
     fu.state = 'error';
     fu.error = message;
+    if (streamFuAsk === askId) {
+      streamFuNode = null;
+      streamFuAsk = null;
+    }
     renderFollowups();
   }
 
@@ -1213,9 +1339,35 @@
       } else if (msg.type === 'envelope') {
         foldEnvelope(msg.env);
         renderTranscript();
+      } else if (msg.type === 'explanation_partial') {
+        // (#1) hop-1 result: paint the explanation + breakdown immediately; the
+        // grounded answer (if any) streams in via answer_delta frames next.
+        const ex = msg.explanation;
+        if (ex && ex.segment_id) {
+          const prev = model.explanations.get(ex.segment_id);
+          const answerText = prev && prev.answerText ? prev.answerText : '';
+          model.explanations.set(ex.segment_id, { state: 'streaming', ex, answerText });
+          renderTranscript();
+          if (ex.segment_id === selected) renderExplanation(ex, { streaming: true, answerText });
+        }
+      } else if (msg.type === 'answer_delta') {
+        // (#1) a streamed answer fragment — for the explain panel (segment_id) or a
+        // typed follow-up (ask_id).
+        if (msg.ask_id) applyAnswerDelta(msg.ask_id, msg.text);
+        else if (msg.segment_id) applyExplainAnswerDelta(msg.segment_id, msg.text);
       } else if (msg.type === 'explanation') {
         const ex = msg.explanation;
         if (ex && ex.segment_id) {
+          // Keep streamed answer text if the final result degraded without one
+          // (don't retract text the reader already saw).
+          const prev = model.explanations.get(ex.segment_id);
+          if (!ex.answer && prev && prev.answerText && ex.state === 'degraded') {
+            ex.answer = prev.answerText;
+          }
+          if (streamAnswerSeg === ex.segment_id) {
+            streamAnswerNode = null;
+            streamAnswerSeg = null;
+          }
           model.explanations.set(ex.segment_id, { state: 'done', ex });
           renderTranscript(); // inline answer under the line
           if (ex.segment_id === selected) renderExplanation(ex); // full breakdown in panel
@@ -1572,6 +1724,36 @@
   // pop-out window when one is open (it has its own <html>). Guarded so the core
   // flow is unaffected if the toggle markup is absent.
   const THEME_KEY = 'aizen-theme';
+
+  // ---- Obsidian feature flag -----------------------------------------------
+  // Obsidian is an OPT-IN integration: off and fully hidden by default. A slider
+  // in Settings flips it on, which unhides the Obsidian connect card under
+  // Sources. Persisted in localStorage like the theme so the choice survives a
+  // reload (and so the on-boot vault re-connect only fires when it's enabled).
+  const OBSIDIAN_KEY = 'aizen-obsidian-enabled';
+
+  function obsidianEnabled() {
+    try {
+      return localStorage.getItem(OBSIDIAN_KEY) === '1';
+    } catch {
+      return false; // storage blocked (private mode) → stay off (the safe default)
+    }
+  }
+
+  function setObsidianEnabled(on, persist) {
+    if (persist) {
+      try {
+        localStorage.setItem(OBSIDIAN_KEY, on ? '1' : '0');
+      } catch {
+        /* storage blocked (private mode) — the choice just won't survive reload */
+      }
+    }
+    // Turning it OFF must truly disable it: drop any connected vault so its notes
+    // stop grounding answers and nothing Obsidian-related lingers while hidden.
+    if (!on && model.obsidian.status !== 'idle') disconnectObsidian();
+    // Reflect the change immediately if a popup that surfaces Obsidian is open.
+    if (openModalKind === 'sources' || openModalKind === 'settings') renderOpenModal();
+  }
 
   function currentTheme() {
     const root = document.documentElement;
@@ -2075,6 +2257,40 @@
     return body;
   }
 
+  // A labelled slider in Settings that flips the Obsidian integration on/off.
+  // Off by default; turning it on unhides the Obsidian connect card in the
+  // Sources popup. Shown for both anonymous and signed-in users (it's a local
+  // client preference, not an account feature).
+  function buildObsidianToggleSection() {
+    const sec = mk('div', 'set-feature');
+    sec.appendChild(mk('p', 'modal-section-label', 'Integrations'));
+
+    const row = mk('label', 'switch-row');
+    const main = mk('div', 'switch-main');
+    main.appendChild(mk('div', 'switch-title', 'Obsidian vault'));
+    main.appendChild(
+      mk('p', 'switch-desc',
+        'Connect a local Obsidian vault so its notes ground answers. Off by default — ' +
+        'turning this on reveals the connector under Sources.'),
+    );
+    row.appendChild(main);
+
+    const sw = mk('span', 'switch');
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.className = 'switch-input';
+    input.checked = obsidianEnabled();
+    input.setAttribute('role', 'switch');
+    input.setAttribute('aria-label', 'Enable Obsidian vault integration');
+    input.addEventListener('change', () => setObsidianEnabled(input.checked, true));
+    sw.appendChild(input);
+    sw.appendChild(mk('span', 'switch-track'));
+    row.appendChild(sw);
+
+    sec.appendChild(row);
+    return sec;
+  }
+
   function buildSettingsBody() {
     const body = mk('div', 'modal-content');
 
@@ -2091,6 +2307,7 @@
         wrap.appendChild(btn);
       });
       body.appendChild(wrap);
+      body.appendChild(buildObsidianToggleSection());
       return body;
     }
 
@@ -2140,6 +2357,8 @@
     actions.appendChild(saveBtn);
     actions.appendChild(outBtn);
     body.appendChild(actions);
+
+    body.appendChild(buildObsidianToggleSection());
     return body;
   }
 
@@ -2430,8 +2649,10 @@
 
     // If the S0 helper scripts didn't load (window.AizenSources/AizenObsidian
     // undefined — usually a server started before these routes existed), retrieval +
-    // Obsidian are degraded. Surface one clear, actionable banner up top.
-    if (!srcLib() || !obsLib()) {
+    // Obsidian are degraded. Surface one clear, actionable banner up top. Only flag
+    // the missing Obsidian helper when the integration is actually enabled.
+    const obsOn = obsidianEnabled();
+    if (!srcLib() || (obsOn && !obsLib())) {
       body.appendChild(
         mk('p', 'usrc-file-error',
           'Some source features didn’t load (/sources.js, /obsidian.js). Hard-refresh ' +
@@ -2440,10 +2661,11 @@
     }
 
     // "Your sources" (pasted context), then local files (F3), then Obsidian (F4) —
-    // all three pour into the one S0 library; the cited-web list sits below.
+    // all pour into the one S0 library; the cited-web list sits below. Obsidian is
+    // an opt-in integration, so its connector only appears once enabled in Settings.
     body.appendChild(buildUserSourcesSection());
     body.appendChild(buildFilesSection());
-    body.appendChild(buildObsidianSection());
+    if (obsOn) body.appendChild(buildObsidianSection());
 
     // "Cited sources" — the web pages grounded answers have cited this session.
     const sources = collectAllSources();
@@ -2745,5 +2967,7 @@
   });
 
   bootAccount();
-  tryRestoreObsidian(); // F4 — offer a one-click reconnect if a vault handle was persisted
+  // F4 — offer a one-click reconnect if a vault handle was persisted, but only
+  // when the Obsidian integration is enabled (off + hidden by default).
+  if (obsidianEnabled()) tryRestoreObsidian();
 })();

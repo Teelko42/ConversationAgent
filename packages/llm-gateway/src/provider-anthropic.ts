@@ -17,6 +17,7 @@ import type {
   CompletionRequest,
   CompletionResult,
   LlmProvider,
+  StreamHandlers,
   Tier,
   TokenUsage,
 } from './index.js';
@@ -96,13 +97,51 @@ export class AnthropicProvider implements LlmProvider {
       { timeout: this.requestTimeoutMs, maxRetries: 1 },
     );
 
-    const text = msg.content
-      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-      .map((b) => b.text)
-      .join('');
-
-    return { text, usage: mapUsage(msg.usage) };
+    return { text: textOf(msg), usage: mapUsage(msg.usage) };
   }
+
+  /**
+   * Streaming completion (P-latency lever). Uses the SDK's `messages.stream`
+   * helper: every `text` event is an incremental fragment we forward via
+   * `handlers.onDelta`, and `finalMessage()` accumulates the full `Message` so we
+   * still return the complete text + real usage (input/cache/output) for the
+   * CostMeter — identical accounting to `complete()`. Honors the same per-request
+   * timeout + retry cap, and an optional `signal` so a no-longer-wanted answer can
+   * be aborted mid-flight (the gateway turns the resulting reject into a degrade).
+   */
+  async completeStream(req: CompletionRequest, handlers: StreamHandlers): Promise<CompletionResult> {
+    const model = this.models[req.tier];
+    const max_tokens = Math.max(req.estOutputTokens ?? 0, DEFAULT_MAX_TOKENS[req.tier]);
+
+    const stream = this.client.messages.stream(
+      {
+        model,
+        max_tokens,
+        system: [
+          { type: 'text', text: this.system, cache_control: { type: 'ephemeral' } },
+        ],
+        messages: [{ role: 'user', content: req.prompt }],
+      },
+      { timeout: this.requestTimeoutMs, maxRetries: 1, signal: handlers.signal },
+    );
+
+    if (handlers.onDelta) {
+      // The SDK's 'text' event already isolates assistant text deltas (it excludes
+      // input_json / thinking deltas), so we can forward the fragment as-is.
+      stream.on('text', (textDelta: string) => handlers.onDelta!(textDelta));
+    }
+
+    const msg = await stream.finalMessage();
+    return { text: textOf(msg), usage: mapUsage(msg.usage) };
+  }
+}
+
+/** Concatenate every text block of a (final) message into one string. */
+function textOf(msg: Anthropic.Message): string {
+  return msg.content
+    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+    .map((b) => b.text)
+    .join('');
 }
 
 /**

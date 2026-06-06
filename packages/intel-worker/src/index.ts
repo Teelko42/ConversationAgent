@@ -28,6 +28,8 @@ export {
   pickKeyWords,
   type ExplainInput,
   type ExplainOptions,
+  type ExplainHooks,
+  type AnswerStreamHooks,
 } from './explain.js';
 
 // --- F1 follow-up engine: answer a typed question about an explained sentence ---

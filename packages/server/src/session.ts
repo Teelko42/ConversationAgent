@@ -26,8 +26,11 @@ import {
   type LlmProvider,
 } from '@aizen/llm-gateway';
 import { makeWebSearchProvider, type WebSearchProvider } from '@aizen/research';
-import { explainSentence, answerFollowup } from '@aizen/intel-worker';
+import { explainSentence, answerFollowup, type ExplainHooks } from '@aizen/intel-worker';
 import type { FollowupAnswer, SentenceExplanation, UserSource } from '@aizen/contracts';
+
+/** The hop-1 payload streamed ahead of the answer (see `ExplainHooks.onExplanation`). */
+export type ExplanationPartial = Parameters<NonNullable<ExplainHooks['onExplanation']>>[0];
 import {
   StubSttProvider,
   runStt,
@@ -60,7 +63,25 @@ export interface SessionHandle {
    * it survives a WS reconnect because the client re-sends it each time, so a
    * question can be answered from user context even with no web-search key.
    */
-  explain(segmentId: string, text: string, userSources?: UserSource[]): Promise<SentenceExplanation>;
+  explain(
+    segmentId: string,
+    text: string,
+    /**
+     * The surrounding live transcript the BROWSER is looking at (recent FINAL lines,
+     * oldest→newest). Folded into the explain + answer prompts so a sentence that a
+     * long pause split across lines is read in the context of its neighbours. As with
+     * `ask`, it is preferred over this session's own `recentFinals` buffer — the
+     * buffer is empty on a freshly (re)connected session (the browser keeps the
+     * transcript, the server does not) — and the session falls back to that buffer
+     * when the client sends none.
+     */
+    clientContext?: { transcript?: string[] },
+    userSources?: UserSource[],
+    /** Stream the grounded answer's text fragments as they are produced (#1). */
+    onAnswerDelta?: (text: string) => void,
+    /** Paint the explanation+breakdown the moment hop 1 lands, before the answer (#1). */
+    onExplanation?: (partial: ExplanationPartial) => void,
+  ): Promise<SentenceExplanation>;
   /**
    * On-demand: answer a user-typed FOLLOW-UP question about a sentence that was
    * just explained, grounded in the recent transcript context + web sources (F1).
@@ -81,6 +102,8 @@ export interface SessionHandle {
     askId: string,
     clientContext?: { sentence?: string; transcript?: string[] },
     userSources?: UserSource[],
+    /** Stream the follow-up answer's text fragments as they are produced (#1). */
+    onAnswerDelta?: (text: string) => void,
   ): Promise<FollowupAnswer>;
   stop(): Promise<void>;
 }
@@ -244,14 +267,27 @@ export async function createSession(
     sessionId,
     mode,
     sendAudio: (pcm) => stream?.sendAudio(pcm),
-    explain: (segmentId, text, userSources) =>
-      withTimeout(
+    explain: (segmentId, text, clientContext, userSources, onAnswerDelta, onExplanation) => {
+      // Prefer the transcript the client shipped (its model survives WS reconnects,
+      // whereas this session's `recentFinals` starts empty after one); fall back to
+      // the server-side rolling buffer so an older client still gets some context.
+      const clientTranscript = (clientContext?.transcript ?? [])
+        .map((t) => (typeof t === 'string' ? t.trim() : ''))
+        .filter(Boolean);
+      const transcript =
+        clientTranscript.length > 0 ? clientTranscript : recentFinals.map((r) => r.text);
+      return withTimeout(
         explainSentence(
           { segment_id: segmentId, session_id: sessionId, tenant_id: cfg.tenantId, text },
           gateway,
           {
             research: status.search === 'tavily' ? research : undefined,
             ...(userSources && userSources.length ? { userSources } : {}),
+            ...(transcript.length ? { transcript } : {}),
+          },
+          {
+            ...(onAnswerDelta ? { onAnswerDelta } : {}),
+            ...(onExplanation ? { onExplanation } : {}),
           },
         ),
         ONDEMAND_TIMEOUT_MS,
@@ -268,8 +304,9 @@ export async function createSession(
           sources: [],
           state: 'degraded',
         }),
-      ),
-    ask: (segmentId, question, _askId, clientContext, userSources) => {
+      );
+    },
+    ask: (segmentId, question, _askId, clientContext, userSources, onAnswerDelta) => {
       // Prefer the context the client shipped with the ask (its model survives WS
       // reconnects, whereas this session's `recentFinals` starts empty after one).
       // Fall back to the named segment's sentence, then the most recent final line,
@@ -296,6 +333,7 @@ export async function createSession(
             research: status.search === 'tavily' ? research : undefined,
             ...(userSources && userSources.length ? { userSources } : {}),
           },
+          { ...(onAnswerDelta ? { onAnswerDelta } : {}) },
         ),
         ONDEMAND_TIMEOUT_MS,
         () => ({

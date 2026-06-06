@@ -222,10 +222,25 @@ async function main(): Promise<void> {
       if (msg.type === 'stop') {
         void session?.stop();
       } else if (msg.type === 'explain' && msg.segment_id && msg.text) {
-        const { segment_id, text } = msg;
+        const { segment_id, text, transcript } = msg;
         const userSources = coerceUserSources(msg.user_sources);
+        // The client ships the surrounding transcript it's looking at, so a sentence
+        // a long pause split across lines is explained in the context of its
+        // neighbours — and so that context survives a WS reconnect (a fresh server
+        // session's own buffer starts empty). The session prefers this, falling back
+        // to its rolling buffer when absent.
+        // Stream the answer in (#1): the explanation+breakdown paints as soon as hop 1
+        // lands (`explanation_partial`), then the grounded answer arrives token-by-token
+        // (`answer_delta`), then the final `explanation` frame reconciles answer+sources.
         session
-          ?.explain(segment_id, text, userSources)
+          ?.explain(
+            segment_id,
+            text,
+            { transcript },
+            userSources,
+            (delta) => send({ type: 'answer_delta', segment_id, text: delta }),
+            (partial) => send({ type: 'explanation_partial', explanation: partial }),
+          )
           .then((explanation) => send({ type: 'explanation', explanation }))
           .catch((err: unknown) =>
             send({ type: 'explain_error', segment_id, message: String((err as Error)?.message ?? err) }),
@@ -237,9 +252,17 @@ async function main(): Promise<void> {
         // follow-up is answerable even on a freshly (re)connected session whose own
         // context buffer is still empty. The session prefers this, falling back to
         // its rolling buffer when absent. `user_sources` rides along the same way,
-        // so BYO context survives a reconnect too (F2 §6).
+        // so BYO context survives a reconnect too (F2 §6). The answer streams in via
+        // `answer_delta` frames (#1), with the final `answer` frame reconciling sources.
         session
-          ?.ask(segment_id, question, ask_id, { sentence, transcript }, userSources)
+          ?.ask(
+            segment_id,
+            question,
+            ask_id,
+            { sentence, transcript },
+            userSources,
+            (delta) => send({ type: 'answer_delta', ask_id, text: delta }),
+          )
           .then((answer) => send({ type: 'answer', ask_id, answer }))
           .catch((err: unknown) =>
             send({ type: 'answer_error', ask_id, message: String((err as Error)?.message ?? err) }),

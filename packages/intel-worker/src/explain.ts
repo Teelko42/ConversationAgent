@@ -23,8 +23,31 @@ import type {
   UserSource,
   WordBreakdown,
 } from '@aizen/contracts';
-import type { LlmGateway } from '@aizen/llm-gateway';
+import { isStubReply, type LlmGateway } from '@aizen/llm-gateway';
 import type { WebSearchProvider, WebSource } from '@aizen/research';
+
+/**
+ * Streaming hooks (latency lever #1). Both engines emit the grounded ANSWER as it
+ * is produced via `onAnswerDelta` (plain-text fragments, in order); `explainSentence`
+ * also paints the explanation+breakdown the moment hop 1 is parsed (`onExplanation`),
+ * before the answer has finished — so the UI fills progressively instead of waiting
+ * for the whole chain. All hooks are optional: omit them and the engines behave
+ * exactly as the buffered, single-result callers expect.
+ */
+export interface AnswerStreamHooks {
+  /** Each incremental fragment of the grounded answer (real provider only). */
+  onAnswerDelta?: (text: string) => void;
+}
+export interface ExplainHooks extends AnswerStreamHooks {
+  /** Hop-1 result (explanation + breakdown + classification), before the answer. */
+  onExplanation?: (partial: {
+    segment_id: string;
+    sentence: string;
+    explanation: string;
+    breakdown: WordBreakdown[];
+    is_question: boolean;
+  }) => void;
+}
 
 /** The minimal identity + text the engine needs from a final segment. */
 export interface ExplainInput {
@@ -46,7 +69,21 @@ export interface ExplainOptions {
    * with NO web search (no Tavily key) — that's the whole point of BYO sources.
    */
   userSources?: UserSource[];
+  /**
+   * Recent FINAL transcript lines from the live session (oldest→newest), the
+   * sentence's surrounding conversation. Folded in so a sentence that a long pause
+   * split across lines is read together with its neighbours (the explanation,
+   * breakdown, and `is_question` classification all see the context), and so a
+   * fragmentary question resolves what it refers to. It is DISAMBIGUATION context
+   * only for the answer — the grounded answer is still synthesized solely from web /
+   * user sources, never from the transcript, so questions never hallucinate. Absent
+   * ⇒ both prompts are byte-for-byte the no-context originals.
+   */
+  transcript?: string[];
 }
+
+/** How many recent transcript lines to fold in as context (backstop; client caps too). */
+const EXPLAIN_CONTEXT_LINES = 12;
 
 /** What the explain call is asked to return; parsed leniently. */
 interface ParsedExplain {
@@ -64,20 +101,92 @@ export async function explainSentence(
   input: ExplainInput,
   gateway: LlmGateway,
   opts: ExplainOptions = {},
+  hooks: ExplainHooks = {},
 ): Promise<SentenceExplanation> {
   const sentence = input.text.trim();
+  const userSources = opts.userSources ?? [];
+  const maxResults = opts.maxSources ?? 3;
+  // Recent conversation around this sentence (live transcript). Trimmed, de-blanked,
+  // and capped so one frame can't carry an unbounded prompt. Empty ⇒ no context block.
+  const transcript = (opts.transcript ?? [])
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .slice(-EXPLAIN_CONTEXT_LINES);
   let degraded = false;
 
-  // 1) Explain + break down + classify (Sonnet via routeTier('enrich')). The asker's
-  //    own connected sources (Obsidian vault / files / pasted notes) are folded in so
-  //    the EXPLANATION itself is grounded in their context — not only the answer.
+  // ── (#2 speculative search) ────────────────────────────────────────────────
+  // Kick the web search off CONCURRENTLY with the explain call, using the sentence
+  // itself as the query (a heuristic query matches a reasoned one ~73% of the time
+  // at the first step — see PERFORMANCE_RESEARCH.md). Gated by the cheap local
+  // `looksLikeQuestion` so a plain statement never spends a search/credit. The
+  // model's own `is_question` (hop 1) stays authoritative for whether we SHOW an
+  // answer; this only takes the search OFF the critical path. Never rejects → [].
+  const heuristicQuestion = looksLikeQuestion(sentence);
+  const speculativeSearch: Promise<WebSource[]> | null =
+    heuristicQuestion && opts.research
+      ? opts.research
+          .search(sentence, { maxResults })
+          .then((r) => r.sources.filter((s) => s.url))
+          .catch(() => [])
+      : null;
+
+  // ── (#1 stream + #3 parallel answer) ───────────────────────────────────────
+  // The answer hop depends ONLY on the sources (not on hop 1's output — see
+  // `buildAnswerPrompt`), so it runs concurrently with the explain call, starting
+  // the moment sources are known. Its streamed deltas are BUFFERED until hop 1
+  // confirms `is_question`; then flushed and forwarded live. If hop 1 says "not a
+  // question", the stream is ABORTED and the buffer dropped — a non-question never
+  // shows (or pays to finish) an answer. So the two Sonnet hops overlap with no
+  // risk of surfacing an answer we'd have to retract.
+  let gateOpen = false;
+  const deltaBuffer: string[] = [];
+  const forwardDelta = (text: string): void => {
+    if (!hooks.onAnswerDelta) return;
+    if (gateOpen) hooks.onAnswerDelta(text);
+    else deltaBuffer.push(text);
+  };
+  const openGate = (): void => {
+    gateOpen = true;
+    if (hooks.onAnswerDelta && deltaBuffer.length) {
+      hooks.onAnswerDelta(deltaBuffer.join(''));
+      deltaBuffer.length = 0;
+    }
+  };
+
+  const answerAbort = new AbortController();
+  // Resolves to the synthesized answer + the web sources it used (null answer when
+  // there's nothing to ground, or the gateway degraded). Always resolves.
+  const speculativeAnswer:
+    | Promise<{ webSources: WebSource[]; answer: string | null; degraded: boolean }>
+    | null = heuristicQuestion
+    ? (speculativeSearch ?? Promise.resolve<WebSource[]>([])).then(async (webSources) => {
+        // No grounding at all → no answer (matches the web-OR-user rule below).
+        if (webSources.length === 0 && userSources.length === 0) {
+          return { webSources, answer: null, degraded: false };
+        }
+        const ans = await gateway.invokeStream(
+          {
+            kind: 'enrich',
+            tenantId: input.tenant_id,
+            prompt: buildAnswerPrompt(sentence, webSources, userSources, transcript),
+            estOutputTokens: 200,
+          },
+          { onDelta: forwardDelta, signal: answerAbort.signal },
+        );
+        if (!ans.ok || isStubReply(ans.text)) return { webSources, answer: null, degraded: true };
+        return { webSources, answer: cleanAnswer(ans.text), degraded: false };
+      })
+    : null;
+
+  // Hop 1 — explain + break down + classify (non-streamed JSON; the structure is the
+  // point). Folds in the asker's own connected sources so the EXPLANATION itself is
+  // grounded in their context, not only the answer.
   const res = await gateway.invoke({
     kind: 'enrich',
     tenantId: input.tenant_id,
-    prompt: buildExplainPrompt(sentence, opts.userSources ?? []),
+    prompt: buildExplainPrompt(sentence, userSources, transcript),
     estOutputTokens: 400,
   });
-
   const candidate = res.ok ? parseExplain(res.text, sentence) : null;
   let parsed: ParsedExplain;
   if (candidate && candidate.explanation) {
@@ -87,51 +196,62 @@ export async function explainSentence(
     parsed = fallbackExplain(sentence, res.ok ? res.text : '');
   }
 
-  // 2) Question? → ground a short answer in web sources AND/OR user-provided
-  //    context (best-effort). With user sources present we can answer even when no
-  //    web search is wired (no Tavily key) — that's what makes BYO sources work.
+  // Paint the explanation now — the answer (if any) streams in next.
+  hooks.onExplanation?.({
+    segment_id: input.segment_id,
+    sentence,
+    explanation: parsed.explanation,
+    breakdown: parsed.breakdown,
+    is_question: parsed.is_question,
+  });
+
   let answer: string | null = null;
   let sources: SentenceExplanation['sources'] = [];
+
   if (parsed.is_question) {
-    const userSources = opts.userSources ?? [];
-    let webSources: WebSource[] = [];
-    if (opts.research) {
-      const query = parsed.search_query.trim() || sentence;
-      try {
-        const r = await opts.research.search(query, { maxResults: opts.maxSources ?? 3 });
-        webSources = r.sources.filter((s) => s.url);
-      } catch {
-        webSources = [];
+    if (speculativeAnswer) {
+      // Heuristic agreed → the answer is already in flight. Open the gate (flush any
+      // buffered deltas + forward the rest live), then take its final text.
+      openGate();
+      const r = await speculativeAnswer;
+      sources = buildSources(input.segment_id, r.webSources, userSources, 'web');
+      answer = r.answer;
+      if (r.degraded) degraded = true;
+    } else {
+      // Heuristic MISSED but the model says it's a question → fall back to the
+      // sequential path (search with the model's query, then a streamed answer).
+      // Worst case = the original latency, never worse.
+      gateOpen = true; // nothing buffered; forward straight through
+      let webSources: WebSource[] = [];
+      if (opts.research) {
+        const query = parsed.search_query.trim() || sentence;
+        try {
+          const r = await opts.research.search(query, { maxResults });
+          webSources = r.sources.filter((s) => s.url);
+        } catch {
+          webSources = [];
+        }
+      }
+      sources = buildSources(input.segment_id, webSources, userSources, 'web');
+      if (webSources.length > 0 || userSources.length > 0) {
+        const ans = await gateway.invokeStream(
+          {
+            kind: 'enrich',
+            tenantId: input.tenant_id,
+            prompt: buildAnswerPrompt(sentence, webSources, userSources, transcript),
+            estOutputTokens: 200,
+          },
+          { onDelta: forwardDelta },
+        );
+        if (!ans.ok || isStubReply(ans.text)) degraded = true;
+        else answer = cleanAnswer(ans.text);
       }
     }
-
-    sources = [
-      ...webSources.map((s, i) => ({
-        citation_id: `ct_${input.segment_id}_web_${i}`,
-        type: 'web' as const,
-        url: s.url,
-        title: s.title,
-        snippet: s.snippet.slice(0, 400),
-        support_score: s.score ?? 0.5,
-      })),
-      ...userSources.map((u, i) => userCitation(`ct_${input.segment_id}_user_${i}`, u)),
-    ];
-
-    // Answer whenever there is ANY grounding (web OR user) — not web-only.
-    if (webSources.length > 0 || userSources.length > 0) {
-      const ans = await gateway.invoke({
-        kind: 'enrich',
-        tenantId: input.tenant_id,
-        prompt: buildAnswerPrompt(sentence, webSources, userSources),
-        estOutputTokens: 200,
-      });
-      if (ans.ok) {
-        const text = parseAnswer(ans.text);
-        answer = text && text.toLowerCase() !== 'unknown' ? text : null;
-      } else {
-        degraded = true; // couldn't synthesize; keep the sources as leads.
-      }
-    }
+  } else if (speculativeAnswer) {
+    // The model says this isn't a question → drop the speculative answer (its deltas
+    // were buffered, never shown) and stop paying for it.
+    answerAbort.abort();
+    void speculativeAnswer.catch(() => undefined);
   }
 
   return {
@@ -199,17 +319,19 @@ export async function answerFollowup(
   input: FollowupInput,
   gateway: LlmGateway,
   opts: FollowupOptions = {},
+  hooks: AnswerStreamHooks = {},
 ): Promise<FollowupAnswer> {
   const question = input.question.trim();
   const sentence = (input.context.sentence ?? '').trim();
   const transcript = (input.context.transcript ?? []).map((t) => t.trim()).filter(Boolean);
+  const userSources = opts.userSources ?? [];
   let degraded = false;
 
   // 1) Best-effort web search to ground outside facts with citations. The query
   //    blends the question with the sentence it's about so context-anchored asks
-  //    ("how does that compare to X?") retrieve relevant pages.
-  const userSources = opts.userSources ?? [];
-  let sources: FollowupAnswer['sources'] = [];
+  //    ("how does that compare to X?") retrieve relevant pages. (A follow-up is
+  //    always a question, and synthesis must SEE the sources, so — unlike explain —
+  //    the search stays ahead of the LLM hop; the latency win here is streaming.)
   let webSources: WebSource[] = [];
   if (opts.research) {
     const query = buildFollowupQuery(question, sentence);
@@ -220,39 +342,25 @@ export async function answerFollowup(
       webSources = [];
     }
   }
-  sources = [
-    ...webSources.map((s, i) => ({
-      citation_id: `ct_${input.segment_id}_fu_${i}`,
-      type: 'web' as const,
-      url: s.url,
-      title: s.title,
-      snippet: s.snippet.slice(0, 400),
-      support_score: s.score ?? 0.5,
-    })),
-    ...userSources.map((u, i) => userCitation(`ct_${input.segment_id}_user_${i}`, u)),
-  ];
+  const sources = buildSources(input.segment_id, webSources, userSources, 'fu');
 
-  // 2) Synthesize the answer from conversation context + web + user sources (one
-  //    enrich hop). The gateway's CostMeter enforces the per-tenant ceiling; a
-  //    refusal (cost cap) returns !ok → degraded, never throws.
+  // 2) Synthesize from conversation context + web + user sources (one enrich hop),
+  //    STREAMED to the UI (#1). The CostMeter still enforces the per-tenant ceiling;
+  //    a refusal (cost cap) or the stub's marker reply → degraded, never throws.
   let answer: string | null = null;
-  const res = await gateway.invoke({
-    kind: 'enrich',
-    tenantId: input.tenant_id,
-    prompt: buildFollowupPrompt(question, sentence, transcript, webSources, userSources),
-    estOutputTokens: 250,
-  });
-  if (res.ok) {
-    const parsed = parseFollowupAnswer(res.text);
-    if (!parsed.parsed) {
-      // A non-JSON reply (e.g. the deterministic stub provider) is not a real
-      // answer — degrade gracefully rather than surfacing the stub's marker text.
-      degraded = true;
-    } else {
-      answer = parsed.answer && parsed.answer.toLowerCase() !== 'unknown' ? parsed.answer : null;
-    }
-  } else {
+  const res = await gateway.invokeStream(
+    {
+      kind: 'enrich',
+      tenantId: input.tenant_id,
+      prompt: buildFollowupPrompt(question, sentence, transcript, webSources, userSources),
+      estOutputTokens: 250,
+    },
+    { onDelta: hooks.onAnswerDelta },
+  );
+  if (!res.ok || isStubReply(res.text)) {
     degraded = true;
+  } else {
+    answer = cleanAnswer(res.text);
   }
 
   return {
@@ -270,7 +378,26 @@ export async function answerFollowup(
 // ---------------------------------------------------------------------------
 // Prompts
 // ---------------------------------------------------------------------------
-function buildExplainPrompt(sentence: string, userSources: UserSource[] = []): string {
+/**
+ * Render the surrounding live-transcript lines as a prompt block, or '' when there
+ * are none (so the no-context prompt is byte-for-byte the original). `lead` frames
+ * what the model should DO with the lines — disambiguate (explain hop) vs. only
+ * resolve-the-reference (answer hop). Always opens with "Recent conversation for
+ * context" so both prompts share one stable, testable marker.
+ */
+function transcriptBlock(transcript: string[], lead: string): string {
+  if (!transcript.length) return '';
+  return (
+    `Recent conversation for context (most recent last). ${lead}\n` +
+    `${transcript.map((l) => `- ${l}`).join('\n')}\n\n`
+  );
+}
+
+function buildExplainPrompt(
+  sentence: string,
+  userSources: UserSource[] = [],
+  transcript: string[] = [],
+): string {
   // When the asker has connected their own notes/files (e.g. an Obsidian vault),
   // fold the relevant ones in so the EXPLANATION is grounded in their context.
   // Appended ONLY when present, so the no-sources prompt is byte-for-byte unchanged.
@@ -280,9 +407,18 @@ function buildExplainPrompt(sentence: string, userSources: UserSource[] = []): s
       `terminology and specifics, and do not invent details that are not in them.\n` +
       `Their context:\n${userSourcesBlock(userSources)}\n\n`
     : '';
+  // Live transcript around the sentence: a long pause can split one thought across
+  // lines, so read the sentence together with its neighbours — but explain THAT
+  // sentence, not the whole conversation. Appended only when present.
+  const convo = transcriptBlock(
+    transcript,
+    `The sentence above may be a fragment of a longer thought that a pause split ` +
+      `across lines — read it together with these lines, but explain only THAT sentence:`,
+  );
   return (
     `You help someone understand a sentence from a live conversation.\n\n` +
     `Sentence: "${sentence}"\n\n` +
+    convo +
     context +
     `Reply with ONLY a JSON object, no prose:\n` +
     `{"explanation": "<one or two plain-language sentences explaining what the ` +
@@ -295,31 +431,52 @@ function buildExplainPrompt(sentence: string, userSources: UserSource[] = []): s
   );
 }
 
-function buildAnswerPrompt(sentence: string, sources: WebSource[], userSources: UserSource[] = []): string {
+function buildAnswerPrompt(
+  sentence: string,
+  sources: WebSource[],
+  userSources: UserSource[] = [],
+  transcript: string[] = [],
+): string {
   const block = sources
     .map((s, i) => `[${i + 1}] ${s.title}: ${s.snippet.slice(0, 300)}`)
     .join('\n');
+  // Live transcript as DISAMBIGUATION ONLY: it lets the model resolve what a
+  // fragmentary/elliptical question refers to (a pause may have split it from its
+  // setup line), but the answer itself must still come solely from the web/user
+  // sources — never from the conversation — so questions can't hallucinate from
+  // parametric memory. Appended only when present (no-context prompt unchanged).
+  const convo = transcriptBlock(
+    transcript,
+    `The question may be a fragment split from a longer thought by a pause; use ` +
+      `these lines ONLY to understand what it refers to, not as a source for the answer:`,
+  );
   // No user sources → byte-for-byte the original web-only grounding prompt
   // (so behavior with no BYO sources is unchanged).
+  // Plain-text output (not JSON) so the answer can stream token-by-token straight to
+  // the UI (#1). "unknown" stays the no-answer sentinel; `cleanAnswer` strips stray
+  // quotes/fences a model might still add.
+  const reply =
+    `Answer in plain text — a direct 1-3 sentence answer grounded in the sources, ` +
+    `with no JSON, no preamble, and no surrounding quotes (or exactly "unknown").`;
   if (userSources.length === 0) {
     return (
       `A live conversation asked: "${sentence}"\n\n` +
+      convo +
       `Use ONLY these web sources to answer. If they do not contain the answer, ` +
       `reply with exactly "unknown".\n\nSources:\n${block}\n\n` +
-      `Reply with ONLY a JSON object: ` +
-      `{"answer": "<a 1-3 sentence answer grounded in the sources, or \\"unknown\\">"}`
+      reply
     );
   }
   const webPart = sources.length ? `Web sources:\n${block}\n\n` : '';
   return (
     `A live conversation asked: "${sentence}"\n\n` +
+    convo +
     `Use ONLY the sources below — the web sources AND the context the user ` +
     `provided — to answer. If they do not contain the answer, reply with exactly ` +
     `"unknown".\n\n` +
     webPart +
     `Provided by the user (treat as authoritative context):\n${userSourcesBlock(userSources)}\n\n` +
-    `Reply with ONLY a JSON object: ` +
-    `{"answer": "<a 1-3 sentence answer grounded in the sources, or \\"unknown\\">"}`
+    reply
   );
 }
 
@@ -359,8 +516,9 @@ function buildFollowupPrompt(
     `web sources and ground your claims in them. If you genuinely cannot answer ` +
     `from either, reply with exactly "unknown".\n\n` +
     `Web sources:\n${block}${userBlock}\n\n` +
-    `Reply with ONLY a JSON object, no prose: ` +
-    `{"answer": "<a 1-4 sentence answer grounded in the context/sources, or \\"unknown\\">"}`
+    `Answer in plain text — a direct 1-4 sentence answer grounded in the ` +
+    `context/sources, with no JSON, no preamble, and no surrounding quotes ` +
+    `(or exactly "unknown").`
   );
 }
 
@@ -426,23 +584,48 @@ function parseExplain(text: string, sentence: string): ParsedExplain {
   };
 }
 
-function parseAnswer(text: string): string {
-  const obj = firstJsonObject(text) as { answer?: unknown } | null;
-  if (obj && typeof obj.answer === 'string') return obj.answer.trim();
-  return text.trim().slice(0, 400);
+/**
+ * Normalize a streamed PLAIN-TEXT answer: trim, strip an accidental ```code fence```
+ * or a single pair of surrounding quotes, and map the "unknown" sentinel (or empty)
+ * to null. The stub's marker reply is caught earlier via `isStubReply`, so this only
+ * ever sees real model text.
+ */
+function cleanAnswer(text: string): string | null {
+  let t = (text ?? '').trim();
+  const fenced = t.match(/^```[a-z]*\s*\n?([\s\S]*?)\n?```$/i);
+  if (fenced) t = fenced[1]!.trim();
+  if (
+    t.length >= 2 &&
+    ((t[0] === '"' && t[t.length - 1] === '"') || (t[0] === "'" && t[t.length - 1] === "'"))
+  ) {
+    t = t.slice(1, -1).trim();
+  }
+  if (!t || t.toLowerCase() === 'unknown') return null;
+  return t;
 }
 
 /**
- * Strict parse for a follow-up answer: only a JSON object with a string `answer`
- * counts as parsed. A non-JSON reply (the stub provider's marker text) returns
- * `parsed:false` so the caller degrades instead of echoing junk to the user.
+ * Build the citation list for an answer: web sources first (each carries a URL +
+ * snippet, INV-1/2), then the user's own sources. `webTag` keys the web citation id
+ * ('web' for explain, 'fu' for a follow-up) so ids stay stable + distinct per surface.
  */
-function parseFollowupAnswer(text: string): { answer: string | null; parsed: boolean } {
-  const obj = firstJsonObject(text) as { answer?: unknown } | null;
-  if (obj && typeof obj.answer === 'string') {
-    return { answer: obj.answer.trim(), parsed: true };
-  }
-  return { answer: null, parsed: false };
+function buildSources(
+  segmentId: string,
+  webSources: WebSource[],
+  userSources: UserSource[],
+  webTag: 'web' | 'fu',
+): ExplanationSource[] {
+  return [
+    ...webSources.map((s, i) => ({
+      citation_id: `ct_${segmentId}_${webTag}_${i}`,
+      type: 'web' as const,
+      url: s.url,
+      title: s.title,
+      snippet: s.snippet.slice(0, 400),
+      support_score: s.score ?? 0.5,
+    })),
+    ...userSources.map((u, i) => userCitation(`ct_${segmentId}_user_${i}`, u)),
+  ];
 }
 
 /**

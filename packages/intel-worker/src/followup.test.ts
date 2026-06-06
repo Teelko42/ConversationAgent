@@ -16,13 +16,13 @@ import { answerFollowup } from './explain.js';
  * resolve — a stubbed/cost-capped gateway degrades gracefully rather than throwing.
  */
 
-/** Records every prompt it sees and returns a fixed JSON answer. */
+/** Records every prompt it sees and returns a fixed PLAIN-TEXT answer (it streams). */
 class CapturingProvider implements LlmProvider {
   readonly prompts: string[] = [];
   constructor(private readonly answer: string) {}
   async complete(req: CompletionRequest) {
     this.prompts.push(req.prompt);
-    return { text: `{"answer":${JSON.stringify(this.answer)}}`, usage: { inputTokens: 10, outputTokens: 10 } };
+    return { text: this.answer, usage: { inputTokens: 10, outputTokens: 10 } };
   }
 }
 
