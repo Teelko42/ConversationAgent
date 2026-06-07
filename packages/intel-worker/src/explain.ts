@@ -24,7 +24,7 @@ import type {
   WordBreakdown,
 } from '@aizen/contracts';
 import { isStubReply, type LlmGateway } from '@aizen/llm-gateway';
-import type { WebSearchProvider, WebSource } from '@aizen/research';
+import type { WebSearchOptions, WebSearchProvider, WebSource } from '@aizen/research';
 
 /**
  * Streaming hooks (latency lever #1). Both engines emit the grounded ANSWER as it
@@ -60,8 +60,18 @@ export interface ExplainInput {
 export interface ExplainOptions {
   /** Web search for grounding question answers. Omit ⇒ questions get no answer. */
   research?: WebSearchProvider;
-  /** Max web sources to attach. Default 3. */
+  /** Max web sources to attach. Default 3 (2 in `fast` mode). */
   maxSources?: number;
+  /**
+   * "Answer as fast as possible" mode (settings toggle; PERFORMANCE_RESEARCH.md
+   * §4/§5.4). When on, the web search runs at Tavily's sub-second `'fast'` depth,
+   * fetches fewer sources, and bails sooner if it stalls (degrading to model/user-
+   * source grounding) — so the reply is never held up by a slow lookup. The
+   * already-on streaming + speculative-parallel + parallel-hop levers (#1/#2/#3)
+   * apply regardless; this trades a little search breadth for latency on top. Off
+   * ⇒ every search arg is byte-for-byte the original (depth 'basic', 3 sources).
+   */
+  fast?: boolean;
   /**
    * User-provided context (F2): pasted notes / URLs-with-comments the asker handed
    * the AI. Folded into the answer prompt as authoritative context and emitted as
@@ -85,6 +95,24 @@ export interface ExplainOptions {
 /** How many recent transcript lines to fold in as context (backstop; client caps too). */
 const EXPLAIN_CONTEXT_LINES = 12;
 
+/** Default web sources to attach, normal vs. "fast" mode (fewer ⇒ quicker synthesis). */
+const DEFAULT_MAX_SOURCES = 3;
+const FAST_MAX_SOURCES = 2;
+/** Tighter Tavily abort in "fast" mode: bail and degrade rather than hold up the reply. */
+const FAST_SEARCH_TIMEOUT_MS = 3500;
+
+/**
+ * Per-call web-search options for this request. In `fast` mode they select Tavily's
+ * sub-second `'fast'` depth and a tighter abort; otherwise the object is just
+ * `{ maxResults }` — byte-for-byte the original call. `maxResults` is resolved by the
+ * caller (so an explicit `opts.maxSources` always wins over the mode default).
+ */
+function searchOptionsFor(fast: boolean, maxResults: number): WebSearchOptions {
+  return fast
+    ? { maxResults, searchDepth: 'fast', timeoutMs: FAST_SEARCH_TIMEOUT_MS }
+    : { maxResults };
+}
+
 /** What the explain call is asked to return; parsed leniently. */
 interface ParsedExplain {
   explanation: string;
@@ -105,7 +133,9 @@ export async function explainSentence(
 ): Promise<SentenceExplanation> {
   const sentence = input.text.trim();
   const userSources = opts.userSources ?? [];
-  const maxResults = opts.maxSources ?? 3;
+  const fast = opts.fast ?? false;
+  const maxResults = opts.maxSources ?? (fast ? FAST_MAX_SOURCES : DEFAULT_MAX_SOURCES);
+  const searchOpts = searchOptionsFor(fast, maxResults);
   // Recent conversation around this sentence (live transcript). Trimmed, de-blanked,
   // and capped so one frame can't carry an unbounded prompt. Empty ⇒ no context block.
   const transcript = (opts.transcript ?? [])
@@ -125,7 +155,7 @@ export async function explainSentence(
   const speculativeSearch: Promise<WebSource[]> | null =
     heuristicQuestion && opts.research
       ? opts.research
-          .search(sentence, { maxResults })
+          .search(sentence, searchOpts)
           .then((r) => r.sources.filter((s) => s.url))
           .catch(() => [])
       : null;
@@ -226,7 +256,7 @@ export async function explainSentence(
       if (opts.research) {
         const query = parsed.search_query.trim() || sentence;
         try {
-          const r = await opts.research.search(query, { maxResults });
+          const r = await opts.research.search(query, searchOpts);
           webSources = r.sources.filter((s) => s.url);
         } catch {
           webSources = [];
@@ -293,13 +323,15 @@ export interface FollowupInput {
 export interface FollowupOptions {
   /** Web search for grounding outside facts with citations. Omit ⇒ context-only. */
   research?: WebSearchProvider;
-  /** Max web sources to attach. Default 3. */
+  /** Max web sources to attach. Default 3 (2 in `fast` mode). */
   maxSources?: number;
   /**
    * User-provided context (F2), folded into the follow-up prompt as authoritative
    * context and emitted as `type:'user'` citations — alongside any web sources.
    */
   userSources?: UserSource[];
+  /** "Answer as fast as possible" mode — see `ExplainOptions.fast`. */
+  fast?: boolean;
 }
 
 /**
@@ -334,9 +366,11 @@ export async function answerFollowup(
   //    the search stays ahead of the LLM hop; the latency win here is streaming.)
   let webSources: WebSource[] = [];
   if (opts.research) {
+    const fast = opts.fast ?? false;
+    const maxResults = opts.maxSources ?? (fast ? FAST_MAX_SOURCES : DEFAULT_MAX_SOURCES);
     const query = buildFollowupQuery(question, sentence);
     try {
-      const r = await opts.research.search(query, { maxResults: opts.maxSources ?? 3 });
+      const r = await opts.research.search(query, searchOptionsFor(fast, maxResults));
       webSources = r.sources.filter((s) => s.url);
     } catch {
       webSources = [];

@@ -8,6 +8,19 @@
 > confirms `is_question` (aborted otherwise). The answer is now **plain text** (was
 > JSON) so it can stream. Verified via `tsc -b`, a runtime smoke through the real
 > gateway, and standalone test typecheck. #4–#7 remain open.
+>
+> **Update (2026-06-06): #4 is now SHIPPED behind a "Fast answers" settings toggle.**
+> A per-request preference (Settings → Performance; rides each explain/ask frame like
+> `user_sources`) makes the web search run at Tavily `search_depth:'fast'`, fetch
+> **2** sources instead of 3, and abort after **3.5 s** instead of 9 s — so a slow
+> lookup degrades to model/user-source grounding rather than holding up the reply.
+> Off by default ⇒ search args are byte-for-byte the originals (`'basic'`, 3 sources,
+> 9 s). The `searchDepth` union now includes `'fast'|'ultra-fast'` and is overridable
+> per call (`WebSearchOptions`). A second toggle (Providers → Web search) turns the
+> web lookup **off** entirely for the session (no Tavily call; answers lean on the
+> model + the user's own connected sources). Verified via per-package `tsc` + a
+> `tsx --jitless` smoke (research depth/timeout/maxResults, explain+follow-up fast
+> wiring, and the web-search-off path). #5–#7 remain open.
 
 > Scope: the **on-demand answering path** only — `explainSentence` and
 > `answerFollowup` in `packages/intel-worker/src/explain.ts`, wired by
@@ -29,7 +42,7 @@
 | 1 | **Stream the answer/explanation token-by-token over the WS** (`stream:true` → relay `text_delta`) | Perceived (TTFT) | First text in **~0.3–1 s** instead of after the whole 3-hop chain | **None** (same tokens, same order) | Medium |
 | 2 | **Speculative parallel search**: start Tavily concurrently with the explain call, using the sentence as the query | End-to-end | Removes the **search hop (~0.5–2 s) from the critical path** on questions | Low (handled by fallback) | Medium |
 | 3 | **Parallelize the two Sonnet hops** in `explainSentence` (the answer call doesn't depend on the explain call) | End-to-end | Critical path drops from `explain + search + answer` to `max(explain, search + answer)` | None (already independent) | Medium |
-| 4 | **Tavily `search_depth: 'fast'`** instead of `'basic'` | End-to-end | Search → **sub-second**, same 1 credit | Low | Trivial |
+| 4 | ✅ **Tavily `search_depth: 'fast'`** instead of `'basic'` *(shipped behind the "Fast answers" toggle)* | End-to-end | Search → **sub-second**, same 1 credit | Low | Trivial |
 | 5 | **Route the cheap classify/query-extraction to Haiku 4.5**, keep synthesis on Sonnet 4.6 | End-to-end | Haiku is Anthropic's fastest model; saves on the cheap hop | Medium (validate) | Medium |
 | 6 | **Prompt caching** — *conditional* here (see §5.6); fix the currently-inert cache | Mostly cost; some TTFT | Limited for this app's per-query context | None | Low–Medium |
 | 7 | **Trim prompt/output tokens** (plain-text streamed answer, tighter `max_tokens`) | End-to-end (minor) | Small | Low | Low |

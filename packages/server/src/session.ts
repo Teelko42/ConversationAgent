@@ -31,6 +31,22 @@ import type { FollowupAnswer, SentenceExplanation, UserSource } from '@aizen/con
 
 /** The hop-1 payload streamed ahead of the answer (see `ExplainHooks.onExplanation`). */
 export type ExplanationPartial = Parameters<NonNullable<ExplainHooks['onExplanation']>>[0];
+
+/**
+ * Per-request answering preferences the browser ships with each explain/ask (like
+ * `userSources`, they ride the frame so they survive a WS reconnect with no server
+ * session state). Both map to settings toggles in the UI:
+ *  • `fast`      — "Answer as fast as possible" (Settings): Tavily 'fast' depth,
+ *                  fewer sources, tighter search timeout (PERFORMANCE_RESEARCH.md §4).
+ *  • `webSearch` — "Web search (Tavily)" (Providers): default true; `false` turns the
+ *                  web lookup OFF for this request, so answers lean on the model + the
+ *                  user's own connected sources only (no Tavily call, no web citations).
+ * Both absent ⇒ today's behaviour exactly (web search on when keyed, normal depth).
+ */
+export interface AnswerOptions {
+  fast?: boolean;
+  webSearch?: boolean;
+}
 import {
   StubSttProvider,
   runStt,
@@ -81,6 +97,8 @@ export interface SessionHandle {
     onAnswerDelta?: (text: string) => void,
     /** Paint the explanation+breakdown the moment hop 1 lands, before the answer (#1). */
     onExplanation?: (partial: ExplanationPartial) => void,
+    /** Per-request fast/web-search preferences (settings toggles). */
+    options?: AnswerOptions,
   ): Promise<SentenceExplanation>;
   /**
    * On-demand: answer a user-typed FOLLOW-UP question about a sentence that was
@@ -104,6 +122,8 @@ export interface SessionHandle {
     userSources?: UserSource[],
     /** Stream the follow-up answer's text fragments as they are produced (#1). */
     onAnswerDelta?: (text: string) => void,
+    /** Per-request fast/web-search preferences (settings toggles). */
+    options?: AnswerOptions,
   ): Promise<FollowupAnswer>;
   stop(): Promise<void>;
 }
@@ -267,7 +287,7 @@ export async function createSession(
     sessionId,
     mode,
     sendAudio: (pcm) => stream?.sendAudio(pcm),
-    explain: (segmentId, text, clientContext, userSources, onAnswerDelta, onExplanation) => {
+    explain: (segmentId, text, clientContext, userSources, onAnswerDelta, onExplanation, options) => {
       // Prefer the transcript the client shipped (its model survives WS reconnects,
       // whereas this session's `recentFinals` starts empty after one); fall back to
       // the server-side rolling buffer so an older client still gets some context.
@@ -276,14 +296,19 @@ export async function createSession(
         .filter(Boolean);
       const transcript =
         clientTranscript.length > 0 ? clientTranscript : recentFinals.map((r) => r.text);
+      // Web search is on only when keyed AND not turned off for this request (the
+      // "Web search" Providers toggle). Off ⇒ no Tavily call; the engine grounds the
+      // answer in the user's own sources, or returns no answer (never the web).
+      const useWebSearch = options?.webSearch !== false && status.search === 'tavily';
       return withTimeout(
         explainSentence(
           { segment_id: segmentId, session_id: sessionId, tenant_id: cfg.tenantId, text },
           gateway,
           {
-            research: status.search === 'tavily' ? research : undefined,
+            research: useWebSearch ? research : undefined,
             ...(userSources && userSources.length ? { userSources } : {}),
             ...(transcript.length ? { transcript } : {}),
+            ...(options?.fast ? { fast: true } : {}),
           },
           {
             ...(onAnswerDelta ? { onAnswerDelta } : {}),
@@ -306,7 +331,7 @@ export async function createSession(
         }),
       );
     },
-    ask: (segmentId, question, _askId, clientContext, userSources, onAnswerDelta) => {
+    ask: (segmentId, question, _askId, clientContext, userSources, onAnswerDelta, options) => {
       // Prefer the context the client shipped with the ask (its model survives WS
       // reconnects, whereas this session's `recentFinals` starts empty after one).
       // Fall back to the named segment's sentence, then the most recent final line,
@@ -319,6 +344,7 @@ export async function createSession(
       const sentence =
         clientSentence || about?.text || recentFinals[recentFinals.length - 1]?.text || '';
       const transcript = clientTranscript.length > 0 ? clientTranscript : recentFinals.map((r) => r.text);
+      const useWebSearch = options?.webSearch !== false && status.search === 'tavily';
       return withTimeout(
         answerFollowup(
           {
@@ -330,8 +356,9 @@ export async function createSession(
           },
           gateway,
           {
-            research: status.search === 'tavily' ? research : undefined,
+            research: useWebSearch ? research : undefined,
             ...(userSources && userSources.length ? { userSources } : {}),
+            ...(options?.fast ? { fast: true } : {}),
           },
           { ...(onAnswerDelta ? { onAnswerDelta } : {}) },
         ),

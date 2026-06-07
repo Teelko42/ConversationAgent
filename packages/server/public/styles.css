@@ -1818,6 +1818,12 @@ body.nav-open .nav-backdrop {
   background: var(--warn);
   border-color: transparent;
 }
+/* The interactive Web-search toggle sits where a status badge would, vertically
+   centered against the provider row's top-aligned icon + text. */
+.prov-switch {
+  align-self: center;
+  flex-shrink: 0;
+}
 
 .modal-section-label {
   margin: 18px 0 8px;

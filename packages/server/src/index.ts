@@ -213,6 +213,11 @@ async function main(): Promise<void> {
         sentence?: string;
         transcript?: string[];
         user_sources?: unknown;
+        // Per-request answering prefs (settings toggles): "fast" answering mode and
+        // whether web search (Tavily) may be used. Both default to today's behaviour
+        // when omitted (web search on when keyed; normal, non-fast depth).
+        fast?: unknown;
+        web_search?: unknown;
       };
       try {
         msg = JSON.parse(data.toString('utf8'));
@@ -224,6 +229,12 @@ async function main(): Promise<void> {
       } else if (msg.type === 'explain' && msg.segment_id && msg.text) {
         const { segment_id, text, transcript } = msg;
         const userSources = coerceUserSources(msg.user_sources);
+        // Settings toggles ride the frame (like `user_sources`): only set each when
+        // it deviates from the default, so an older client omitting them is unchanged.
+        const answerOptions = {
+          ...(msg.fast === true ? { fast: true } : {}),
+          ...(msg.web_search === false ? { webSearch: false } : {}),
+        };
         // The client ships the surrounding transcript it's looking at, so a sentence
         // a long pause split across lines is explained in the context of its
         // neighbours — and so that context survives a WS reconnect (a fresh server
@@ -240,6 +251,7 @@ async function main(): Promise<void> {
             userSources,
             (delta) => send({ type: 'answer_delta', segment_id, text: delta }),
             (partial) => send({ type: 'explanation_partial', explanation: partial }),
+            answerOptions,
           )
           .then((explanation) => send({ type: 'explanation', explanation }))
           .catch((err: unknown) =>
@@ -248,6 +260,10 @@ async function main(): Promise<void> {
       } else if (msg.type === 'ask' && msg.segment_id && msg.question && msg.ask_id) {
         const { segment_id, question, ask_id, sentence, transcript } = msg;
         const userSources = coerceUserSources(msg.user_sources);
+        const answerOptions = {
+          ...(msg.fast === true ? { fast: true } : {}),
+          ...(msg.web_search === false ? { webSearch: false } : {}),
+        };
         // The client ships the sentence + recent transcript it's asking about, so a
         // follow-up is answerable even on a freshly (re)connected session whose own
         // context buffer is still empty. The session prefers this, falling back to
@@ -262,6 +278,7 @@ async function main(): Promise<void> {
             { sentence, transcript },
             userSources,
             (delta) => send({ type: 'answer_delta', ask_id, text: delta }),
+            answerOptions,
           )
           .then((answer) => send({ type: 'answer', ask_id, answer }))
           .catch((err: unknown) =>

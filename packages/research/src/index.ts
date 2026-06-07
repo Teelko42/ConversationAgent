@@ -26,8 +26,28 @@ export interface WebSearchResult {
   sources: WebSource[];
 }
 
+/**
+ * Tavily relevance/latency tier (verified against Tavily docs, PERFORMANCE_RESEARCH.md
+ * §5.4): `basic` (default, balanced, 1 credit), `advanced` (highest relevance, higher
+ * latency, 2 credits), `fast`/`ultra-fast` (designed for sub-second interactive use,
+ * 1 credit). The "Fast answers" mode (§4) selects `fast` — sub-second yet still "good
+ * relevance" — never `ultra-fast`, which drops relevance/safety filtering.
+ */
+export type SearchDepth = 'basic' | 'advanced' | 'fast' | 'ultra-fast';
+
 export interface WebSearchOptions {
   maxResults?: number;
+  /**
+   * Per-call relevance/latency tier override. Falls back to the provider's
+   * configured depth, then `'basic'`. The "Fast answers" path passes `'fast'`.
+   */
+  searchDepth?: SearchDepth;
+  /**
+   * Per-call abort timeout (ms), overriding the provider's default. The "Fast
+   * answers" path tightens this so a slow search bails (and the answer degrades to
+   * model/user-source grounding) instead of holding up the reply.
+   */
+  timeoutMs?: number;
 }
 
 /** Vendor-neutral web search. Real adapters (Tavily/Brave) implement this. */
@@ -46,8 +66,8 @@ export interface TavilyProviderOptions {
   apiKey: string;
   /** Override endpoint (default Tavily search API). */
   endpoint?: string;
-  /** 'basic' (fast/cheap) or 'advanced' (deeper). Default 'basic'. */
-  searchDepth?: 'basic' | 'advanced';
+  /** Relevance/latency tier. Default 'basic'; a per-call `WebSearchOptions.searchDepth` overrides it. */
+  searchDepth?: SearchDepth;
   /** Inject a fetch (tests). Defaults to the global fetch (Node 20+). */
   fetchImpl?: typeof fetch;
   /**
@@ -87,7 +107,8 @@ export class TavilyWebSearchProvider implements WebSearchProvider {
     // the caller forever. The abort rejects this promise, which the explain/follow-up
     // engines catch and degrade to "no sources" — no answer is left wedged.
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timeoutMs = opts.timeoutMs ?? this.timeoutMs;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     if (typeof (timer as { unref?: () => void }).unref === 'function') {
       (timer as { unref?: () => void }).unref!(); // don't keep the event loop alive
     }
@@ -102,7 +123,9 @@ export class TavilyWebSearchProvider implements WebSearchProvider {
         body: JSON.stringify({
           query,
           max_results: opts.maxResults ?? 4,
-          search_depth: this.opts.searchDepth ?? 'basic',
+          // Per-call depth (the "Fast answers" path passes 'fast') wins over the
+          // provider's configured depth, then the 'basic' default.
+          search_depth: opts.searchDepth ?? this.opts.searchDepth ?? 'basic',
           include_answer: true,
         }),
         signal: controller.signal,

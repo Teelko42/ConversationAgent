@@ -164,6 +164,10 @@
           text,
           transcript: recentTranscript(),
           user_sources: userSourcesForSend(text),
+          // Answering-preference toggles (Settings / Providers). Sent every frame so
+          // the choice survives a WS reconnect with no server session state.
+          fast: fastAnswersEnabled(),
+          web_search: webSearchEnabled(),
         }),
       );
     }
@@ -1149,6 +1153,8 @@
           transcript: ctx.transcript,
           // The "current query" for retrieval (S0) is the typed follow-up question.
           user_sources: userSourcesForSend(question),
+          fast: fastAnswersEnabled(),
+          web_search: webSearchEnabled(),
         }),
       );
       // Final safety net: if no answer/error frame ever comes back (a wedged
@@ -1755,6 +1761,55 @@
     if (openModalKind === 'sources' || openModalKind === 'settings') renderOpenModal();
   }
 
+  // ---- Answering preferences (ride every explain/ask frame) ----------------
+  // Two settings toggles, persisted in localStorage like the theme so they survive
+  // a reload, and shipped with each request (mirroring user_sources) so the choice
+  // survives a WS reconnect with no server-side session state:
+  //   • Fast answers (Settings → Performance): answer as fast as possible — the
+  //     server runs Tavily at 'fast' depth, fewer sources, tighter timeout. Off by
+  //     default (matches today's behaviour). See PERFORMANCE_RESEARCH.md §4.
+  //   • Web search (Providers → Web search): turn the web lookup OFF so answers lean
+  //     on the model + your own connected sources only. ON by default.
+  const FAST_KEY = 'aizen-fast-answers';
+  const WEBSEARCH_KEY = 'aizen-web-search';
+
+  function fastAnswersEnabled() {
+    try {
+      return localStorage.getItem(FAST_KEY) === '1'; // missing ⇒ off (the default)
+    } catch {
+      return false;
+    }
+  }
+  function setFastAnswers(on, persist) {
+    if (persist) {
+      try {
+        localStorage.setItem(FAST_KEY, on ? '1' : '0');
+      } catch {
+        /* storage blocked (private mode) — the choice just won't survive reload */
+      }
+    }
+    // No side effects beyond the next request; the checkbox already shows its state.
+  }
+
+  function webSearchEnabled() {
+    try {
+      return localStorage.getItem(WEBSEARCH_KEY) !== '0'; // missing ⇒ on (the default)
+    } catch {
+      return true;
+    }
+  }
+  function setWebSearch(on, persist) {
+    if (persist) {
+      try {
+        localStorage.setItem(WEBSEARCH_KEY, on ? '1' : '0');
+      } catch {
+        /* storage blocked (private mode) — the choice just won't survive reload */
+      }
+    }
+    // Refresh the Providers popup so the Web-search row's wording reflects the change.
+    if (openModalKind === 'providers') renderOpenModal();
+  }
+
   function currentTheme() {
     const root = document.documentElement;
     return root && root.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
@@ -2194,21 +2249,46 @@
     return (sessionInfo && sessionInfo.provider_status) || wsProviderStatus || {};
   }
 
+  // The on/off switch shown on the Providers "Web search" row when a Tavily key is
+  // configured. Reflects + persists the user's web-search preference; toggling it
+  // re-renders the Providers body so the row's wording updates.
+  function buildWebSearchSwitch() {
+    const sw = mk('span', 'switch prov-switch');
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.className = 'switch-input';
+    input.checked = webSearchEnabled();
+    input.setAttribute('role', 'switch');
+    input.setAttribute('aria-label', 'Use web search (Tavily) for answers');
+    input.addEventListener('change', () => setWebSearch(input.checked, true));
+    sw.appendChild(input);
+    sw.appendChild(mk('span', 'switch-track'));
+    return sw;
+  }
+
   function buildProvidersBody() {
     const ps = providerStatus();
     const body = mk('div', 'modal-content');
 
+    // Web search is special: it's the one provider the user can switch on/off here
+    // (when a Tavily key is configured). `webKeyed` = a key is present; the effective
+    // state also folds in the user's "Web search" toggle. With no key it's just off.
+    const webKeyed = ps.search === 'tavily';
+    const webOn = webKeyed && webSearchEnabled();
+
     const defs = [
-      { icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v4"/></svg>', name: 'Speech-to-text', on: ps.stt === 'deepgram',
+      { key: 'stt', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v4"/></svg>', name: 'Speech-to-text', on: ps.stt === 'deepgram',
         onText: 'Deepgram — live transcription of your mic & computer audio.',
         offText: 'Stub — a canned demo clip drives the transcript.', onBadge: 'Live', offBadge: 'Demo', offCls: 'demo' },
-      { icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 4 1.6 3.9L17.5 9.5l-3.9 1.6L12 15l-1.6-3.9L6.5 9.5l3.9-1.6z"/><path d="M19 14l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6z"/></svg>', name: 'Explanations', on: ps.llm === 'anthropic',
+      { key: 'llm', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 4 1.6 3.9L17.5 9.5l-3.9 1.6L12 15l-1.6-3.9L6.5 9.5l3.9-1.6z"/><path d="M19 14l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6z"/></svg>', name: 'Explanations', on: ps.llm === 'anthropic',
         onText: 'Anthropic Claude — plain-language explanations & answers.',
         offText: 'Stub — canned demo replies (add ANTHROPIC_API_KEY).', onBadge: 'Live', offBadge: 'Demo', offCls: 'demo' },
-      { icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>', name: 'Web search', on: ps.search === 'tavily',
+      { key: 'search', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>', name: 'Web search', on: webOn,
         onText: 'Tavily — answers grounded in cited web sources.',
-        offText: 'Off — answers rely on the model alone (add TAVILY_API_KEY).', onBadge: 'On', offBadge: 'Off', offCls: '' },
-      { icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>', name: 'Sign-in', on: !!(ps.auth && ps.auth !== 'stub'),
+        offText: webKeyed
+          ? 'Turned off — answers rely on the model and your own sources, with no web lookup.'
+          : 'Off — answers rely on the model alone (add TAVILY_API_KEY).', onBadge: 'On', offBadge: 'Off', offCls: '' },
+      { key: 'auth', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>', name: 'Sign-in', on: !!(ps.auth && ps.auth !== 'stub'),
         onText: 'OAuth — sign in with ' + authLabel(ps.auth) + '.',
         offText: 'Demo accounts — no OAuth keys set (stub provider).', onBadge: 'OAuth', offBadge: 'Demo', offCls: 'demo' },
     ];
@@ -2223,8 +2303,15 @@
       main.appendChild(mk('div', 'prov-name', d.name));
       main.appendChild(mk('p', 'prov-desc', d.on ? d.onText : d.offText));
       row.appendChild(main);
-      const badge = mk('span', 'prov-badge' + (d.on ? ' on' : d.offCls ? ' ' + d.offCls : ''), d.on ? d.onBadge : d.offBadge);
-      row.appendChild(badge);
+      // The Web-search row is interactive when a key is configured: a switch lets the
+      // user turn lookups off for the session (Tavily isn't called; answers fall back
+      // to the model + their own sources). Every other row stays a status badge.
+      if (d.key === 'search' && webKeyed) {
+        row.appendChild(buildWebSearchSwitch());
+      } else {
+        const badge = mk('span', 'prov-badge' + (d.on ? ' on' : d.offCls ? ' ' + d.offCls : ''), d.on ? d.onBadge : d.offBadge);
+        row.appendChild(badge);
+      }
       list.appendChild(row);
     });
     body.appendChild(list);
@@ -2255,6 +2342,42 @@
       body.appendChild(table);
     }
     return body;
+  }
+
+  // A labelled slider in Settings (Performance section) for "Fast answers": answer
+  // as fast as possible. Off by default; flipping it on makes every explain/ask run
+  // the web search at sub-second 'fast' depth with fewer sources + a tighter timeout
+  // (PERFORMANCE_RESEARCH.md §4). A local client preference (rides each request),
+  // shown for anonymous and signed-in users alike.
+  function buildFastAnswersToggleSection() {
+    const sec = mk('div', 'set-feature');
+    sec.appendChild(mk('p', 'modal-section-label', 'Performance'));
+
+    const row = mk('label', 'switch-row');
+    const main = mk('div', 'switch-main');
+    main.appendChild(mk('div', 'switch-title', 'Fast answers'));
+    main.appendChild(
+      mk('p', 'switch-desc',
+        'Answer as fast as possible. Web lookups run at a sub-second depth, pull ' +
+        'fewer sources, and time out sooner — trading a little search breadth for ' +
+        'speed. Streaming is always on; this tightens what happens behind it.'),
+    );
+    row.appendChild(main);
+
+    const sw = mk('span', 'switch');
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.className = 'switch-input';
+    input.checked = fastAnswersEnabled();
+    input.setAttribute('role', 'switch');
+    input.setAttribute('aria-label', 'Answer as fast as possible');
+    input.addEventListener('change', () => setFastAnswers(input.checked, true));
+    sw.appendChild(input);
+    sw.appendChild(mk('span', 'switch-track'));
+    row.appendChild(sw);
+
+    sec.appendChild(row);
+    return sec;
   }
 
   // A labelled slider in Settings that flips the Obsidian integration on/off.
@@ -2307,6 +2430,7 @@
         wrap.appendChild(btn);
       });
       body.appendChild(wrap);
+      body.appendChild(buildFastAnswersToggleSection());
       body.appendChild(buildObsidianToggleSection());
       return body;
     }
@@ -2358,6 +2482,7 @@
     actions.appendChild(outBtn);
     body.appendChild(actions);
 
+    body.appendChild(buildFastAnswersToggleSection());
     body.appendChild(buildObsidianToggleSection());
     return body;
   }
