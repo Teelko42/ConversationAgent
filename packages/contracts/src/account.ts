@@ -176,7 +176,14 @@ export const StoredArtifactSchema = z.object({
   account_id: z.string().uuid(),
   session_id: z.string().uuid(),
   /** The canonical contract family this artifact came from. */
-  kind: z.enum(['transcript_segment', 'concept_card', 'kg_node', 'kg_edge', 'insight_item']),
+  kind: z.enum([
+    'transcript_segment',
+    'concept_card',
+    'kg_node',
+    'kg_edge',
+    'insight_item',
+    'session_summary',
+  ]),
   /** The artifact payload as it was on the bus (validated by its own contract). */
   payload: z.unknown(),
   created_at_us: z.number().int().nonnegative(),

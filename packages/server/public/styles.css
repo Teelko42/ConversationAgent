@@ -2408,3 +2408,445 @@ body.nav-open .nav-backdrop {
   padding: 6px 8px;
   border-radius: var(--r-sm, 8px);
 }
+
+/* ============================================================================
+   Live intelligence panels — concepts, insights, recap, knowledge graph.
+   Driven by the F02 envelopes from the always-on live-intel worker; they reuse
+   the .glow-card / .card-head shell and add these inner layouts.
+   ========================================================================== */
+
+.intel-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--gap);
+  align-items: start;
+  margin-top: var(--gap);
+}
+
+/* count chip shown in a card head (e.g. "Concepts  5") */
+.count-badge {
+  color: var(--accent);
+  border-color: var(--line-accent);
+  background: var(--accent-glow);
+  min-width: 26px;
+  justify-content: center;
+}
+
+.panel-empty {
+  margin: 6px 2px;
+  font-size: 13px;
+  color: var(--muted-2);
+  font-style: italic;
+}
+
+/* ---- concept cards ------------------------------------------------------- */
+.concept-list {
+  gap: 9px;
+}
+.concept-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--glass-soft);
+  border-radius: var(--r-md);
+  padding: 11px 13px;
+  font: inherit;
+  color: var(--text);
+  transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+}
+.concept-card.clickable {
+  cursor: pointer;
+}
+.concept-card.clickable:hover {
+  border-color: var(--line-accent);
+  box-shadow: 0 4px 18px var(--accent-glow);
+  transform: translateY(-1px);
+}
+.cc-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.cc-name {
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 14.5px;
+}
+.cc-kind {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: var(--r-pill);
+  color: var(--accent-deep);
+  background: var(--accent-glow);
+  border: 1px solid var(--line-accent);
+}
+.cc-kind-entity_person,
+.cc-kind-entity_org,
+.cc-kind-entity_product,
+.cc-kind-entity_location,
+.cc-kind-entity_financial_instrument,
+.cc-kind-entity_legal_ref,
+.cc-kind-entity_medical {
+  color: var(--cyan);
+  background: rgba(12, 107, 134, 0.1);
+  border-color: rgba(12, 107, 134, 0.32);
+}
+.cc-kind-acronym,
+.cc-kind-jargon_term {
+  color: var(--violet);
+  background: rgba(168, 80, 47, 0.1);
+  border-color: rgba(168, 80, 47, 0.32);
+}
+.cc-def {
+  margin: 7px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.cc-mentions {
+  display: inline-block;
+  margin-top: 7px;
+  font-size: 10.5px;
+  color: var(--muted-2);
+}
+
+/* ---- insights ------------------------------------------------------------ */
+.insight-list {
+  gap: 14px;
+}
+.insight-group {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.ig-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ig-label {
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.ig-count {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted-2);
+  background: var(--well);
+  border-radius: var(--r-pill);
+  padding: 1px 7px;
+}
+.insight-item {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  background: var(--glass-soft);
+  border-radius: var(--r-sm);
+  padding: 9px 12px;
+}
+.insight-action_item {
+  border-left-color: var(--good);
+}
+.insight-decision {
+  border-left-color: var(--accent);
+}
+.insight-open_question {
+  border-left-color: var(--cyan);
+}
+.insight-risk {
+  border-left-color: var(--warn);
+}
+.insight-commitment {
+  border-left-color: var(--violet);
+}
+.insight-item.resolved {
+  opacity: 0.6;
+}
+.insight-item.resolved .ii-text {
+  text-decoration: line-through;
+}
+.ii-text {
+  display: block;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.ii-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+.ii-owner {
+  font-size: 11px;
+  color: var(--muted-2);
+}
+.ii-jump {
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--accent);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.ii-jump:hover {
+  color: var(--accent-deep);
+}
+
+/* ---- recap --------------------------------------------------------------- */
+.summary-card {
+  margin-top: var(--gap);
+}
+#summary-stamp {
+  text-transform: none;
+  font-weight: 600;
+}
+.summary-body {
+  margin-top: 4px;
+}
+.summary-text {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.summary-bullets {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.summary-bullets li {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* ---- knowledge graph ----------------------------------------------------- */
+.graph-card {
+  margin-top: var(--gap);
+}
+.graph-canvas {
+  position: relative;
+  width: 100%;
+  height: 360px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: radial-gradient(circle at 50% 38%, var(--accent-glow), transparent 62%), var(--well);
+  overflow: hidden;
+}
+.modal-focus .graph-canvas {
+  height: min(70vh, 640px);
+}
+.graph-canvas svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.graph-edge {
+  stroke: var(--line-strong);
+  stroke-width: 1.2;
+  transition: opacity 0.12s;
+}
+.graph-edge.dim {
+  opacity: 0.08;
+}
+.graph-node {
+  cursor: pointer;
+}
+.graph-node circle {
+  fill: var(--accent);
+  stroke: var(--glass);
+  stroke-width: 1.5;
+  transition: opacity 0.12s;
+}
+.graph-node.gn-entity circle {
+  fill: var(--cyan);
+}
+.graph-node.gn-topic circle {
+  fill: var(--violet);
+}
+.graph-node.gn-event circle {
+  fill: var(--warn);
+}
+.graph-node:hover circle {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+.graph-node text {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 11px;
+  fill: var(--text);
+  pointer-events: auto; /* the label is a click/drag target too, not just the dot */
+  user-select: none; /* a press on the label must not select its text */
+}
+.graph-node.dim {
+  opacity: 0.28;
+}
+
+/* Node popover: a small card graph.js keeps pinned over a clicked node (client.js
+   fills it with the transcript messages that concept refers to). Absolutely placed
+   inside the .graph-canvas, which clips it — its position is clamped to stay inside. */
+.graph-popover {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 5;
+  width: min(280px, 78%);
+  max-height: 86%;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--glass-raise);
+  box-shadow: var(--glow-blue-hover);
+  backdrop-filter: blur(8px);
+  overflow: hidden;
+  font-size: 12px;
+  animation: gp-in 0.12s ease-out;
+}
+@keyframes gp-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+.gp-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 9px 7px 11px;
+  border-bottom: 1px solid var(--line);
+}
+.gp-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+.gp-kind {
+  flex: none;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: var(--accent);
+  background: var(--accent-glow);
+}
+.gp-kind-entity {
+  color: var(--cyan);
+  background: color-mix(in srgb, var(--cyan) 16%, transparent);
+}
+.gp-kind-topic {
+  color: var(--violet);
+  background: color-mix(in srgb, var(--violet) 16%, transparent);
+}
+.gp-kind-event {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+}
+.gp-name {
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.gp-close {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1;
+  padding: 1px 5px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.gp-close:hover {
+  color: var(--text);
+  background: var(--well);
+}
+.gp-body {
+  padding: 7px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.gp-note,
+.gp-empty {
+  margin: 1px 4px 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.gp-msg {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--glass-soft);
+  padding: 7px 9px;
+  cursor: pointer;
+  color: var(--text);
+  transition: border-color 0.12s, background 0.12s;
+}
+.gp-msg:hover {
+  border-color: var(--accent);
+  background: var(--glass);
+}
+.gp-who {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.gp-text {
+  display: block;
+  line-height: 1.4;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* Section headers + export button in the read-only saved-session view. */
+.hist-section {
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 18px 0 8px;
+}
+.hist-export {
+  margin: 6px 0 4px;
+}
+
+/* Stack the concept/insight columns on narrow screens. */
+@media (max-width: 920px) {
+  .intel-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -82,6 +82,8 @@ const STATIC: Record<string, { file: string; type: string }> = {
   // S0 source library + retrieval and the F4 Obsidian seam — loaded before client.js.
   '/sources.js': { file: 'sources.js', type: 'text/javascript; charset=utf-8' },
   '/obsidian.js': { file: 'obsidian.js', type: 'text/javascript; charset=utf-8' },
+  // Knowledge-graph force layout (window.AizenGraph) — loaded before client.js.
+  '/graph.js': { file: 'graph.js', type: 'text/javascript; charset=utf-8' },
   '/styles.css': { file: 'styles.css', type: 'text/css; charset=utf-8' },
 };
 

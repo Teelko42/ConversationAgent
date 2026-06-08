@@ -69,6 +69,16 @@
     modalTitle: document.getElementById('modal-title'),
     modalBody: document.getElementById('modal-body'),
     modalClose: document.getElementById('modal-close'),
+    // Live intelligence panels (concept cards / insights / recap / knowledge graph).
+    concepts: document.getElementById('concepts'),
+    conceptsCount: document.getElementById('concepts-count'),
+    insights: document.getElementById('insights'),
+    insightsCount: document.getElementById('insights-count'),
+    summary: document.getElementById('summary'),
+    summaryStamp: document.getElementById('summary-stamp'),
+    graph: document.getElementById('graph'),
+    graphExpand: document.getElementById('graph-expand'),
+    exportBtn: document.getElementById('export-btn'),
   };
 
   // Free-text transcript filter (set by the top-bar search box). Empty = show all.
@@ -79,6 +89,11 @@
     transcript: new Map(), // segment_id -> latest line {rev, is_final, who, text}
     explanations: new Map(), // segment_id -> {state:'loading'|'done', ex?}
     followups: [], // ordered Q→A thread: {ask_id, segment_id, question, state, answer?, error?}
+    // Live intelligence (F02 envelopes from the always-on live-intel worker):
+    cards: new Map(), // concept_card.id -> latest ConceptCard revision
+    insights: new Map(), // insight_item.id -> latest InsightItem revision
+    summary: null, // latest SessionSummary {text, bullets, updated_at_us}
+    graph: { nodes: new Map(), edges: new Map() }, // accumulated from kg_delta envelopes
     // S0: the canonical source library lives in window.AizenSources. These two are
     // CLIENT-side view state only:
     userSources: [], // legacy paste-only fallback used iff sources.js failed to load
@@ -118,7 +133,12 @@
   }
 
   function foldEnvelope(env) {
-    if (!env || isF02(env)) return; // only transcript (F01) has a UI surface now.
+    if (!env) return;
+    // F02 = live intelligence (concept_card / insight_item / kg_delta / session_summary).
+    if (isF02(env)) {
+      foldF02(env);
+      return;
+    }
     // F01: a TranscriptSegment has these fields (an AudioFrame does not).
     if ('segment_id' in env && 'text' in env && 'is_final' in env) {
       model.transcript.set(env.segment_id, {
@@ -132,7 +152,83 @@
       if (env.is_final && looksLikeQuestion(env.text)) {
         requestExplain(env.segment_id, env.text);
       }
+      renderTranscript();
     }
+  }
+
+  // Route a live-intelligence (F02) envelope into the model, then schedule the
+  // affected panel to re-render. These ride the SAME socket as transcript frames —
+  // the server relays every bus envelope, and the always-on live-intel worker is
+  // their producer. Folded by stable id, keeping the latest revision, so a concept or
+  // insight that is re-surfaced updates IN PLACE instead of duplicating.
+  function foldF02(env) {
+    switch (env.message_type) {
+      case 'concept_card': {
+        const c = env.card;
+        if (!c || !c.id) return;
+        if (c.state === 'retracted') {
+          model.cards.delete(c.id);
+        } else {
+          const prev = model.cards.get(c.id);
+          if (!prev || (c.revision || 0) >= (prev.revision || 0)) model.cards.set(c.id, c);
+        }
+        scheduleRender('concepts');
+        break;
+      }
+      case 'insight_item': {
+        const i = env.insight;
+        if (!i || !i.id) return;
+        const prev = model.insights.get(i.id);
+        if (!prev || (i.revision || 0) >= (prev.revision || 0)) model.insights.set(i.id, i);
+        scheduleRender('insights');
+        break;
+      }
+      case 'kg_delta': {
+        applyKgDelta(env.delta);
+        scheduleRender('graph');
+        break;
+      }
+      case 'session_summary': {
+        if (env.summary) model.summary = env.summary;
+        scheduleRender('summary');
+        break;
+      }
+    }
+  }
+
+  // Apply one kg_delta to the accumulated graph model (upsert by id, remove by id).
+  function applyKgDelta(delta) {
+    if (!delta) return;
+    (delta.upsert_nodes || []).forEach((n) => {
+      if (n && n.id) model.graph.nodes.set(n.id, n);
+    });
+    (delta.upsert_edges || []).forEach((e) => {
+      if (e && e.id) model.graph.edges.set(e.id, e);
+    });
+    (delta.remove_node_ids || []).forEach((id) => model.graph.nodes.delete(id));
+    (delta.remove_edge_ids || []).forEach((id) => model.graph.edges.delete(id));
+  }
+
+  // rAF-coalesced panel renders: a burst of F02 envelopes (one extraction emits a
+  // kg_delta plus several concept_cards/insights at once) triggers at most one render
+  // per panel per frame. Falls back to a timer where rAF is unavailable (test DOM).
+  let renderScheduled = false;
+  const dirtyPanels = new Set();
+  function scheduleRender(which) {
+    dirtyPanels.add(which);
+    if (renderScheduled) return;
+    renderScheduled = true;
+    const flush = () => {
+      renderScheduled = false;
+      const panels = new Set(dirtyPanels);
+      dirtyPanels.clear();
+      if (panels.has('concepts')) renderConcepts();
+      if (panels.has('insights')) renderInsights();
+      if (panels.has('summary')) renderSummary();
+      if (panels.has('graph')) renderGraph();
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(flush);
+    else setTimeout(flush, 16);
   }
 
   // The recent FINAL transcript lines (oldest→newest), capped to bound frame size.
@@ -742,6 +838,243 @@
     if (el) el.textContent = String(value);
   }
 
+  // ---- live intelligence panels (concepts / insights / recap / graph) -------
+  // All four are driven by the F02 envelopes folded above; each renders from the
+  // model and is invoked (rAF-coalesced) by scheduleRender. A small `mk()` builder
+  // (defined later, hoisted) keeps these terse and XSS-safe (textContent, never HTML).
+
+  const CARD_KIND_LABEL = {
+    acronym: 'acronym',
+    jargon_term: 'jargon',
+    concept: 'concept',
+    topic: 'topic',
+    metric: 'metric',
+    event: 'event',
+    reference: 'reference',
+    entity_person: 'person',
+    entity_org: 'org',
+    entity_product: 'product',
+    entity_location: 'place',
+    entity_financial_instrument: 'instrument',
+    entity_legal_ref: 'legal',
+    entity_medical: 'medical',
+  };
+
+  function emptyState(text) {
+    return mk('p', 'panel-empty', text);
+  }
+
+  function renderConcepts() {
+    if (!els.concepts) return;
+    // Most salient first; ties keep insertion (surfacing) order.
+    const cards = [...model.cards.values()].sort((a, b) => (b.salience || 0) - (a.salience || 0));
+    if (els.conceptsCount) els.conceptsCount.textContent = String(cards.length);
+    els.concepts.innerHTML = '';
+    if (!cards.length) {
+      els.concepts.appendChild(emptyState('Concepts will appear here as the conversation unfolds.'));
+      return;
+    }
+    cards.forEach((c) => els.concepts.appendChild(buildConceptCard(c)));
+  }
+
+  function buildConceptCard(c) {
+    const seg = c.first_mention && c.first_mention.segment_id;
+    const canDeepDive = !!(seg && model.transcript.has(seg));
+    const el = mk(canDeepDive ? 'button' : 'div', 'concept-card');
+    if (canDeepDive) {
+      el.type = 'button';
+      el.classList.add('clickable');
+      el.title = 'Explain where this came up';
+      el.addEventListener('click', () => selectAndExplain(seg));
+    }
+    const head = mk('div', 'cc-head');
+    head.appendChild(mk('span', 'cc-name', c.canonical_name || c.surface_form));
+    head.appendChild(mk('span', 'cc-kind cc-kind-' + (c.kind || 'concept'), CARD_KIND_LABEL[c.kind] || 'concept'));
+    el.appendChild(head);
+    if (c.definition_short) el.appendChild(mk('p', 'cc-def', c.definition_short));
+    if ((c.mention_count || 0) > 1) el.appendChild(mk('span', 'cc-mentions', c.mention_count + ' mentions'));
+    return el;
+  }
+
+  const INSIGHT_GROUPS = [
+    { type: 'action_item', label: 'Action items' },
+    { type: 'decision', label: 'Decisions' },
+    { type: 'open_question', label: 'Open questions' },
+    { type: 'risk', label: 'Risks' },
+    { type: 'commitment', label: 'Commitments' },
+  ];
+
+  function renderInsights() {
+    if (!els.insights) return;
+    const all = [...model.insights.values()].filter((i) => i.status !== 'dismissed');
+    if (els.insightsCount) els.insightsCount.textContent = String(all.length);
+    els.insights.innerHTML = '';
+    if (!all.length) {
+      els.insights.appendChild(emptyState('Action items, decisions, and open questions will collect here.'));
+      return;
+    }
+    INSIGHT_GROUPS.forEach((g) => {
+      const items = all.filter((i) => i.insight_type === g.type);
+      if (!items.length) return;
+      const group = mk('div', 'insight-group insight-group-' + g.type);
+      const h = mk('div', 'ig-head');
+      h.appendChild(mk('span', 'ig-label', g.label));
+      h.appendChild(mk('span', 'ig-count', String(items.length)));
+      group.appendChild(h);
+      items.forEach((i) => group.appendChild(buildInsightItem(i)));
+      els.insights.appendChild(group);
+    });
+  }
+
+  function buildInsightItem(i) {
+    const el = mk('div', 'insight-item insight-' + i.insight_type);
+    if (i.status === 'resolved') el.classList.add('resolved');
+    el.appendChild(mk('span', 'ii-text', i.text));
+    const meta = mk('div', 'ii-meta');
+    if (i.owner_speaker_id) meta.appendChild(mk('span', 'ii-owner', i.owner_speaker_id));
+    const seg = (i.evidence_segment_ids || [])[0];
+    if (seg && model.transcript.has(seg)) {
+      const jump = mk('button', 'ii-jump', 'evidence');
+      jump.type = 'button';
+      jump.addEventListener('click', () => selectAndExplain(seg));
+      meta.appendChild(jump);
+    }
+    if (meta.childNodes.length) el.appendChild(meta);
+    return el;
+  }
+
+  function renderSummary() {
+    if (!els.summary) return;
+    const s = model.summary;
+    els.summary.innerHTML = '';
+    if (!s || !s.text) {
+      els.summary.appendChild(emptyState('A running recap of the conversation will appear here.'));
+      if (els.summaryStamp) els.summaryStamp.textContent = 'live';
+      return;
+    }
+    els.summary.appendChild(mk('p', 'summary-text', s.text));
+    if (s.bullets && s.bullets.length) {
+      const ul = mk('ul', 'summary-bullets');
+      s.bullets.forEach((b) => ul.appendChild(mk('li', null, b)));
+      els.summary.appendChild(ul);
+    }
+    if (els.summaryStamp) els.summaryStamp.textContent = 'updated ' + timeAgo(s.updated_at_us);
+  }
+
+  function timeAgo(us) {
+    if (!us) return 'just now';
+    const sec = Math.max(0, Math.round((Date.now() - us / 1000) / 1000));
+    if (sec < 5) return 'just now';
+    if (sec < 60) return sec + 's ago';
+    return Math.round(sec / 60) + 'm ago';
+  }
+
+  // Knowledge graph (Phase 3): delegates to window.AizenGraph (graph.js) when present
+  // and there are nodes; otherwise shows an empty state. Clicking a node opens a
+  // popover anchored over it listing the transcript messages that concept refers to;
+  // clicking a message deep-dives into it (the same web-grounded explain flow).
+  function renderGraph() {
+    if (!els.graph) return;
+    const nodes = [...model.graph.nodes.values()];
+    const edges = [...model.graph.edges.values()];
+    if (typeof window !== 'undefined' && window.AizenGraph && nodes.length) {
+      window.AizenGraph.render(els.graph, nodes, edges, (node, ui) => showNodeMessages(node, ui));
+      return;
+    }
+    els.graph.innerHTML = '';
+  }
+
+  // The transcript messages a knowledge-graph node refers to, oldest→newest, deduped,
+  // and limited to lines we actually have text for. A node's concept surfaces in three
+  // places the client already accumulates: the node's own `first_seen_segment_id`, the
+  // ConceptCard it links to (`first_mention` + every `mention_segment_ids` + citation
+  // segments), and the evidence on any edge incident to the node.
+  function nodeMessageSegments(node) {
+    const ids = [];
+    const seen = new Set();
+    const add = (s) => {
+      if (s && !seen.has(s)) {
+        seen.add(s);
+        ids.push(s);
+      }
+    };
+    if (node.first_seen_segment_id) add(node.first_seen_segment_id);
+    const card = node.concept_card_id ? model.cards.get(node.concept_card_id) : null;
+    if (card) {
+      if (card.first_mention && card.first_mention.segment_id) add(card.first_mention.segment_id);
+      (card.mention_segment_ids || []).forEach(add);
+      (card.sources || []).forEach((s) => (s.transcript_segment_ids || []).forEach(add));
+    }
+    for (const e of model.graph.edges.values()) {
+      if (e && (e.src === node.id || e.dst === node.id)) (e.evidence_segment_ids || []).forEach(add);
+    }
+    return ids.filter((s) => model.transcript.has(s));
+  }
+
+  // Fill the graph popover (`ui.host`, an empty div graph.js keeps pinned over the
+  // clicked node) with the node's label, type, and the messages it refers to. Each
+  // message row deep-dives via the shared explain flow (and closes the popover first).
+  function showNodeMessages(node, ui) {
+    if (!node || !ui || !ui.host) return;
+    const host = ui.host;
+    const close = typeof ui.close === 'function' ? ui.close : () => {};
+
+    const head = mk('div', 'gp-head');
+    const title = mk('div', 'gp-title');
+    title.appendChild(mk('span', 'gp-kind gp-kind-' + (node.node_type || 'concept'), node.node_type || 'concept'));
+    title.appendChild(mk('span', 'gp-name', node.label || node.id));
+    const closeBtn = mk('button', 'gp-close');
+    closeBtn.type = 'button';
+    closeBtn.setAttribute('aria-label', 'Close');
+    closeBtn.textContent = '×';
+    closeBtn.addEventListener('click', (ev) => {
+      if (ev && ev.stopPropagation) ev.stopPropagation();
+      close();
+    });
+    head.appendChild(title);
+    head.appendChild(closeBtn);
+    host.appendChild(head);
+
+    const body = mk('div', 'gp-body');
+    const segs = nodeMessageSegments(node);
+    if (!segs.length) {
+      body.appendChild(mk('p', 'gp-empty', 'No transcript messages are linked to this node yet.'));
+    } else {
+      body.appendChild(
+        mk(
+          'p',
+          'gp-note',
+          segs.length === 1
+            ? 'Mentioned in 1 message — click to dig in.'
+            : 'Mentioned in ' + segs.length + ' messages — click one to dig in.',
+        ),
+      );
+      segs.forEach((seg) => {
+        const line = model.transcript.get(seg);
+        const row = mk('button', 'gp-msg clickable');
+        row.type = 'button';
+        row.appendChild(mk('span', 'gp-who', line.who || 'Speaker'));
+        row.appendChild(mk('span', 'gp-text', line.text || ''));
+        row.addEventListener('click', (ev) => {
+          if (ev && ev.stopPropagation) ev.stopPropagation();
+          close();
+          selectAndExplain(seg);
+        });
+        body.appendChild(row);
+      });
+    }
+    host.appendChild(body);
+  }
+
+  // Dismiss an open graph node popover (Escape / modal close). Returns true iff one was
+  // open, so the Escape handler can swallow that key before falling through to the modal.
+  function closeGraphPopover() {
+    if (typeof window !== 'undefined' && window.AizenGraph && window.AizenGraph.closePopover && els.graph) {
+      return window.AizenGraph.closePopover(els.graph);
+    }
+    return false;
+  }
+
   // Reflect socket health on the sidebar connection chip (purely cosmetic).
   function setConn(state, text) {
     if (!els.connChip) return;
@@ -863,10 +1196,20 @@
     if (e.target.closest('a')) return; // let source links click through
     const lineEl = e.target.closest('.line.clickable');
     if (!lineEl) return;
-    const id = lineEl.dataset.segmentId;
+    selectAndExplain(lineEl.dataset.segmentId);
+  });
+
+  // Select a transcript sentence and show its full breakdown in the side panel
+  // (requesting the explanation if it wasn't auto-answered). Shared by a transcript
+  // click AND a click on a concept card / insight evidence chip, so a deep-dive from
+  // anywhere reuses the same web-grounded explain flow.
+  function selectAndExplain(id) {
     const line = model.transcript.get(id);
     if (!line) return;
     selected = id;
+    // If a focus modal is open over the live cards, close it so the explanation panel
+    // (which may itself be relocated) is visible for the deep-dive.
+    if (openModalKind && FOCUS_SECTIONS[openModalKind]) closeModal();
     const exState = model.explanations.get(id);
     if (exState && exState.state === 'done') {
       renderExplanation(exState.ex);
@@ -879,7 +1222,7 @@
       requestExplain(id, line.text);
     }
     renderTranscript();
-  });
+  }
 
   // Keep the explanation tab's freshly-produced content in view. The breakdown
   // panel (#explanation) scrolls internally (capped height, overflow-y:auto),
@@ -1343,8 +1686,7 @@
               : ' (add ANTHROPIC_API_KEY + DEEPGRAM_API_KEY to .env for the full live experience).');
         }
       } else if (msg.type === 'envelope') {
-        foldEnvelope(msg.env);
-        renderTranscript();
+        foldEnvelope(msg.env); // renders the affected surface itself (transcript or an intel panel)
       } else if (msg.type === 'explanation_partial') {
         // (#1) hop-1 result: paint the explanation + breakdown immediately; the
         // grounded answer (if any) streams in via answer_delta frames next.
@@ -1403,6 +1745,12 @@
   }
 
   connect();
+
+  // Paint the intelligence panels' empty states on load (they fill as F02 arrives).
+  renderConcepts();
+  renderInsights();
+  renderSummary();
+  renderGraph();
 
   // ---- audio capture (mic / computer / both) -------------------------------
   // One capture engine, three sources. Each source's MediaStream is wired into a
@@ -2072,6 +2420,15 @@
         out.push({ id: String(id), kind: 'transcript_segment', payload: { text: line.text, who: line.who } });
       }
     }
+    // Persist the live intelligence too (the server already accepts these kinds), so a
+    // reopened session keeps its concepts, insights, recap, and graph — not just text.
+    for (const c of model.cards.values()) out.push({ id: c.id, kind: 'concept_card', payload: c });
+    for (const i of model.insights.values()) out.push({ id: i.id, kind: 'insight_item', payload: i });
+    for (const n of model.graph.nodes.values()) out.push({ id: n.id, kind: 'kg_node', payload: n });
+    for (const e of model.graph.edges.values()) out.push({ id: e.id, kind: 'kg_edge', payload: e });
+    if (model.summary && model.summary.text) {
+      out.push({ id: 'summary_' + (currentSessionId || 'x'), kind: 'session_summary', payload: model.summary });
+    }
     return out;
   }
 
@@ -2173,6 +2530,10 @@
     transcript: { id: 'card-transcript', title: 'Transcript' },
     explanation: { id: 'card-explanation', title: 'Explanation' },
     activity: { id: 'card-stats', title: 'Activity' },
+    concepts: { id: 'card-concepts', title: 'Concepts' },
+    insights: { id: 'card-insights', title: 'Insights' },
+    summary: { id: 'card-summary', title: 'Recap' },
+    graph: { id: 'card-graph', title: 'Knowledge graph' },
   };
   let focusedNode = null; // the live card currently relocated into the modal
   let focusHome = null; // { parent, next } to put it back exactly where it was
@@ -3013,24 +3374,171 @@
     body.appendChild(mk('h3', 'hist-detail-title', session.title || 'Untitled session'));
     const n = session.artifact_count || 0;
     const metaText =
-      relTime(session.created_at_us) + ' · ' + n + (n === 1 ? ' line' : ' lines') +
+      relTime(session.created_at_us) + ' · ' + n + (n === 1 ? ' item' : ' items') +
       (session.consent_class === 'sensitive' ? ' · Sensitive' : '');
     body.appendChild(mk('p', 'hist-detail-meta', metaText));
 
-    const segs = (artifacts || []).filter((a) => a && a.kind === 'transcript_segment');
-    if (!segs.length) {
-      body.appendChild(mk('p', 'sources-empty', 'This saved session has no transcript lines.'));
-      return;
+    // Export this saved session as Markdown (recap + concepts + insights + transcript).
+    const exportBtn = mk('button', 'btn btn-secondary hist-export', 'Export as Markdown');
+    exportBtn.type = 'button';
+    exportBtn.addEventListener('click', () =>
+      downloadMarkdown(markdownFromArtifacts(session.title || 'Aizen session', artifacts || [])),
+    );
+    body.appendChild(exportBtn);
+
+    const all = artifacts || [];
+    const by = (k) => all.filter((a) => a && a.kind === k);
+    let rendered = false;
+
+    // Recap.
+    const sum = by('session_summary')[0];
+    if (sum && sum.payload && sum.payload.text) {
+      rendered = true;
+      body.appendChild(mk('h4', 'hist-section', 'Recap'));
+      body.appendChild(mk('p', 'summary-text', sum.payload.text));
+      if (Array.isArray(sum.payload.bullets) && sum.payload.bullets.length) {
+        const ul = mk('ul', 'summary-bullets');
+        sum.payload.bullets.forEach((b) => ul.appendChild(mk('li', null, String(b))));
+        body.appendChild(ul);
+      }
     }
-    const stream = mk('div', 'hist-transcript');
-    segs.forEach((a) => {
-      const p = a.payload || {};
-      const line = mk('div', 'line final');
-      line.appendChild(mk('span', 'who', (p.who || 'Speaker') + ':'));
-      line.appendChild(mk('span', 'txt', ' ' + (p.text || '')));
-      stream.appendChild(line);
+
+    // Concepts.
+    const cards = by('concept_card');
+    if (cards.length) {
+      rendered = true;
+      body.appendChild(mk('h4', 'hist-section', 'Concepts (' + cards.length + ')'));
+      const list = mk('div', 'concept-list');
+      cards.forEach((a) => {
+        const c = a.payload || {};
+        const card = mk('div', 'concept-card');
+        const head = mk('div', 'cc-head');
+        head.appendChild(mk('span', 'cc-name', c.canonical_name || c.surface_form || 'Concept'));
+        if (c.kind) head.appendChild(mk('span', 'cc-kind cc-kind-' + c.kind, CARD_KIND_LABEL[c.kind] || 'concept'));
+        card.appendChild(head);
+        if (c.definition_short) card.appendChild(mk('p', 'cc-def', c.definition_short));
+        list.appendChild(card);
+      });
+      body.appendChild(list);
+    }
+
+    // Insights, grouped by type.
+    const ins = by('insight_item');
+    if (ins.length) {
+      rendered = true;
+      body.appendChild(mk('h4', 'hist-section', 'Insights (' + ins.length + ')'));
+      const list = mk('div', 'insight-list');
+      INSIGHT_GROUPS.forEach((g) => {
+        const items = ins.filter((a) => a.payload && a.payload.insight_type === g.type);
+        if (!items.length) return;
+        const group = mk('div', 'insight-group insight-group-' + g.type);
+        const h = mk('div', 'ig-head');
+        h.appendChild(mk('span', 'ig-label', g.label));
+        h.appendChild(mk('span', 'ig-count', String(items.length)));
+        group.appendChild(h);
+        items.forEach((a) => {
+          const it = mk('div', 'insight-item insight-' + g.type);
+          it.appendChild(mk('span', 'ii-text', a.payload.text || ''));
+          group.appendChild(it);
+        });
+        list.appendChild(group);
+      });
+      body.appendChild(list);
+    }
+
+    // Transcript.
+    const segs = by('transcript_segment');
+    if (segs.length) {
+      rendered = true;
+      body.appendChild(mk('h4', 'hist-section', 'Transcript'));
+      const stream = mk('div', 'hist-transcript');
+      segs.forEach((a) => {
+        const p = a.payload || {};
+        const line = mk('div', 'line final');
+        line.appendChild(mk('span', 'who', (p.who || 'Speaker') + ':'));
+        line.appendChild(mk('span', 'txt', ' ' + (p.text || '')));
+        stream.appendChild(line);
+      });
+      body.appendChild(stream);
+    }
+
+    if (!rendered) {
+      body.appendChild(mk('p', 'sources-empty', 'This saved session has no saved content.'));
+    }
+  }
+
+  // ---- Markdown export -----------------------------------------------------
+  // Build a Markdown document for the LIVE session (what's on screen now) — works
+  // for anyone, signed in or not. The saved-session view exports from its artifacts.
+  function buildLiveMarkdown() {
+    const transcript = [];
+    for (const line of model.transcript.values()) {
+      if (line.is_final && line.text) transcript.push({ who: line.who, text: line.text });
+    }
+    return markdownDoc('Aizen session', {
+      summary: model.summary,
+      concepts: [...model.cards.values()],
+      insights: [...model.insights.values()],
+      transcript,
     });
-    body.appendChild(stream);
+  }
+
+  // Build the same Markdown from a saved session's stored artifacts.
+  function markdownFromArtifacts(title, artifacts) {
+    const by = (k) => (artifacts || []).filter((a) => a && a.kind === k);
+    const sum = by('session_summary')[0];
+    return markdownDoc(title, {
+      summary: sum ? sum.payload : null,
+      concepts: by('concept_card').map((a) => a.payload || {}),
+      insights: by('insight_item').map((a) => a.payload || {}),
+      transcript: by('transcript_segment').map((a) => a.payload || {}),
+    });
+  }
+
+  function markdownDoc(title, d) {
+    const out = ['# ' + title, ''];
+    if (d.summary && d.summary.text) {
+      out.push('## Recap', '', d.summary.text, '');
+      (d.summary.bullets || []).forEach((b) => out.push('- ' + b));
+      if (d.summary.bullets && d.summary.bullets.length) out.push('');
+    }
+    if (d.concepts && d.concepts.length) {
+      out.push('## Concepts', '');
+      d.concepts.forEach((c) => {
+        const name = c.canonical_name || c.surface_form || 'Concept';
+        out.push('- **' + name + '**' + (c.definition_short ? ' — ' + c.definition_short : ''));
+      });
+      out.push('');
+    }
+    if (d.insights && d.insights.length) {
+      out.push('## Insights', '');
+      INSIGHT_GROUPS.forEach((g) => {
+        const items = d.insights.filter((i) => i.insight_type === g.type);
+        if (!items.length) return;
+        out.push('### ' + g.label, '');
+        items.forEach((i) => out.push('- ' + i.text + (i.owner_speaker_id ? ' _(' + i.owner_speaker_id + ')_' : '')));
+        out.push('');
+      });
+    }
+    if (d.transcript && d.transcript.length) {
+      out.push('## Transcript', '');
+      d.transcript.forEach((l) => out.push('**' + (l.who || 'Speaker') + ':** ' + (l.text || '')));
+      out.push('');
+    }
+    return out.join('\n');
+  }
+
+  function downloadMarkdown(md) {
+    if (typeof Blob !== 'function' || typeof URL === 'undefined' || !URL.createObjectURL) return;
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'aizen-session.md';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   function renderOpenModal() {
@@ -3051,6 +3559,10 @@
       els.modalTitle.textContent = def.title;
       setModalFocus(true);
       moveFocusInto(def.id, els.modalBody); // relocate the live card; stays live
+      // The graph sizes to its container — re-fit once it has moved into the modal.
+      if (openModalKind === 'graph' && typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(renderGraph);
+      }
     } else if (openModalKind === 'sources') {
       els.modalTitle.textContent = 'Sources';
       setModalFocus(true);
@@ -3068,11 +3580,14 @@
     show(els.modalOverlay, true);
   }
   function closeModal() {
+    const wasGraph = openModalKind === 'graph';
+    if (wasGraph) closeGraphPopover(); // don't strand a node popover as the graph re-fits
     openModalKind = null;
     restoreFocusNode(); // put any relocated live card back in the dashboard
     if (els.modalBody) els.modalBody.innerHTML = '';
     setModalFocus(false);
     show(els.modalOverlay, false);
+    if (wasGraph) scheduleRender('graph'); // re-fit the graph back to its inline size
     // Back to the full dashboard → reflect that as the active ("Live Session") tab.
     const live = document.querySelector('[data-view="live"]');
     if (live) {
@@ -3082,13 +3597,17 @@
   }
 
   if (els.modalClose) els.modalClose.addEventListener('click', closeModal);
+  if (els.graphExpand) els.graphExpand.addEventListener('click', () => openModal('graph'));
+  if (els.exportBtn) els.exportBtn.addEventListener('click', () => downloadMarkdown(buildLiveMarkdown()));
   if (els.modalOverlay) {
     els.modalOverlay.addEventListener('click', (e) => {
       if (e.target === els.modalOverlay) closeModal(); // backdrop click only
     });
   }
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && openModalKind) closeModal();
+    if (e.key !== 'Escape') return;
+    if (closeGraphPopover()) return; // dismiss an open node popover before any modal
+    if (openModalKind) closeModal();
   });
 
   bootAccount();

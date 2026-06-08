@@ -15,6 +15,7 @@ export * from './followup-answer.js';
 export * from './user-source.js';
 export * from './kg.js';
 export * from './insight.js';
+export * from './session-summary.js';
 export * from './resync.js';
 export * from './extraction-input.js';
 export * from './account.js';

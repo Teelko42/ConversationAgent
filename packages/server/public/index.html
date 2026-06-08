@@ -102,14 +102,40 @@
             <span class="nav-label">Saved sessions</span>
           </a>
 
-          <p class="nav-group-label">Insights</p>
-          <a class="nav-item" href="#card-stats" data-target="card-stats" data-modal="activity">
+          <p class="nav-group-label">Intelligence</p>
+          <a class="nav-item" href="#card-concepts" data-target="card-concepts" data-modal="concepts">
             <span class="nav-ico" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 12h4l2-6 4 12 2-6h6" />
+                <path d="m12 3 1.9 4.6L18.5 9l-4.6 1.9L12 15l-1.9-4.1L5.5 9l4.6-1.4zM18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z" />
               </svg>
             </span>
-            <span class="nav-label">Activity</span>
+            <span class="nav-label">Concepts</span>
+          </a>
+          <a class="nav-item" href="#card-insights" data-target="card-insights" data-modal="insights">
+            <span class="nav-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 11l2 2 4-4M4 5h16M4 12h5M4 19h9" />
+              </svg>
+            </span>
+            <span class="nav-label">Insights</span>
+          </a>
+          <a class="nav-item" href="#card-summary" data-target="card-summary" data-modal="summary">
+            <span class="nav-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M7 3h7l5 5v11a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" />
+                <path d="M14 3v5h5M9 13h6M9 17h4" />
+              </svg>
+            </span>
+            <span class="nav-label">Recap</span>
+          </a>
+          <a class="nav-item" href="#card-graph" data-target="card-graph" data-modal="graph">
+            <span class="nav-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="5" cy="6" r="2" /><circle cx="19" cy="7" r="2" /><circle cx="12" cy="18" r="2" />
+                <path d="M6.7 7.4 10.5 16M17.6 8.5 13.4 16.7M7 6.2l10-.8" />
+              </svg>
+            </span>
+            <span class="nav-label">Knowledge graph</span>
           </a>
           <a class="nav-item" href="#card-explanation" data-target="card-explanation" data-modal="sources">
             <span class="nav-ico" aria-hidden="true">
@@ -194,6 +220,10 @@
 
             <button id="popout" class="btn btn-secondary popout-btn" type="button" title="Pop out the live view into a floating, always-on-top window">
               <span class="btn-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7M21 3l-9 9"/><path d="M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/></svg></span><span class="btn-txt">Pop out</span>
+            </button>
+
+            <button id="export-btn" class="btn btn-secondary export-btn" type="button" title="Download this session (recap, concepts, insights, transcript) as Markdown">
+              <span class="btn-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></span><span class="btn-txt">Export</span>
             </button>
 
             <!-- Account: sign in / sign out, current identity + tier, quota usage.
@@ -340,6 +370,58 @@
               </form>
             </section>
           </section>
+
+          <!-- Live intelligence: concepts + insights, then a recap and the graph. -->
+          <section class="intel-grid" aria-label="Live intelligence">
+            <section id="card-concepts" class="col concepts glow-card">
+              <div class="card-head">
+                <div class="card-head-main">
+                  <span class="card-eyebrow">AI Insight</span>
+                  <h2>Concepts</h2>
+                </div>
+                <span class="card-badge count-badge" id="concepts-count">0</span>
+              </div>
+              <p class="card-note">Jargon, acronyms, and key ideas — surfaced as they’re said. Click one to dig in.</p>
+              <div id="concepts" class="concept-list stream"></div>
+            </section>
+
+            <section id="card-insights" class="col insights glow-card">
+              <div class="card-head">
+                <div class="card-head-main">
+                  <span class="card-eyebrow">AI Insight</span>
+                  <h2>Insights</h2>
+                </div>
+                <span class="card-badge count-badge" id="insights-count">0</span>
+              </div>
+              <p class="card-note">Action items, decisions, open questions, and risks as they come up.</p>
+              <div id="insights" class="insight-list stream"></div>
+            </section>
+          </section>
+
+          <section id="card-summary" class="summary-card glow-card" aria-label="Recap">
+            <div class="card-head">
+              <div class="card-head-main">
+                <span class="card-eyebrow">Recap</span>
+                <h2>What you’ve missed</h2>
+              </div>
+              <span class="card-badge ai-badge" id="summary-stamp" aria-hidden="true">live</span>
+            </div>
+            <div id="summary" class="summary-body"></div>
+          </section>
+
+          <section id="card-graph" class="graph-card glow-card" aria-label="Knowledge graph">
+            <div class="card-head">
+              <div class="card-head-main">
+                <span class="card-eyebrow">AI Insight</span>
+                <h2>Knowledge graph</h2>
+              </div>
+              <button id="graph-expand" class="btn btn-secondary" type="button" title="Open a larger graph view">
+                <span class="btn-txt">Expand</span>
+              </button>
+            </div>
+            <p class="card-note">How the concepts in this conversation connect. Click a node to see the messages it came from.</p>
+            <div id="graph" class="graph-canvas"></div>
+          </section>
         </main>
 
         <footer>
@@ -368,6 +450,8 @@
          its BYO-sources path through them. Plain ES — no build step. -->
     <script src="/sources.js"></script>
     <script src="/obsidian.js"></script>
+    <!-- Knowledge-graph force layout (window.AizenGraph); client.js delegates to it. -->
+    <script src="/graph.js"></script>
     <script src="/client.js"></script>
   </body>
 </html>

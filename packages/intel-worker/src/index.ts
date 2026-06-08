@@ -21,6 +21,13 @@ export {
   type RunEnrichOptions,
 } from './enrich-worker.js';
 
+// --- LIVE intelligence worker: continuous concept cards + insights + recap + KG ---
+export {
+  runLiveIntel,
+  type RunLiveIntelHandle,
+  type RunLiveIntelOptions,
+} from './live-intel.js';
+
 // --- P2 sentence explain engine: explain a sentence + break down words + answer questions ---
 export {
   explainSentence,

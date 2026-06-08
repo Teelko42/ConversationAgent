@@ -1161,3 +1161,108 @@ describe('F3 Phase B — persist sources to the account', () => {
     expect(sel.some((u: any) => /blue otter named Pip/.test(u.text))).toBe(true);
   });
 });
+
+describe('live intelligence panels (concepts / insights / recap)', () => {
+  // The renders are rAF-coalesced; with no rAF in the vm they flush on a setTimeout.
+  const flush = () => new Promise((r) => setTimeout(r, 40));
+
+  function goLive(h: ReturnType<typeof loadClient>) {
+    const ws = h.sockets[0]!;
+    ws.readyState = 1;
+    if (ws.onopen) ws.onopen();
+    ws.onmessage!({
+      data: JSON.stringify({
+        type: 'status',
+        mode: 'live',
+        providers: { stt: 'deepgram', llm: 'anthropic', search: 'tavily' },
+      }),
+    });
+    return ws;
+  }
+  const env = (ws: any, payload: any) =>
+    ws.onmessage!({ data: JSON.stringify({ type: 'envelope', env: payload }) });
+
+  it('renders concept cards, dedupes by revision, and renders insights + a recap', async () => {
+    const h = loadClient();
+    await h.tick();
+    const ws = goLive(h);
+
+    env(ws, { message_type: 'concept_card', card: { id: 'cc_live_1', revision: 1, state: 'enriched', surface_form: 'RAG', canonical_name: 'Retrieval-Augmented Generation', kind: 'acronym', definition_short: 'Retrieval plus generation.', salience: 0.8, first_mention: { segment_id: 'seg_0' }, mention_count: 1 } });
+    env(ws, { message_type: 'concept_card', card: { id: 'cc_live_2', revision: 1, state: 'enriched', surface_form: 'vector db', canonical_name: 'Vector Database', kind: 'concept', definition_short: 'Stores embeddings.', salience: 0.7, first_mention: { segment_id: 'seg_1' }, mention_count: 1 } });
+    env(ws, { message_type: 'insight_item', insight: { id: 'ins_live_1', revision: 1, insight_type: 'action_item', status: 'open', text: 'Evaluate pgvector', owner_speaker_id: 'Alice', evidence_segment_ids: ['seg_1'] } });
+    env(ws, { message_type: 'session_summary', summary: { text: 'They discussed RAG and vector databases.', bullets: ['RAG basics', 'pgvector'], updated_at_us: 1_700_000_000_000_000 } });
+    // Re-surface RAG at a higher revision → folds in place (no duplicate card).
+    env(ws, { message_type: 'concept_card', card: { id: 'cc_live_1', revision: 2, state: 'enriched', surface_form: 'RAG', canonical_name: 'Retrieval-Augmented Generation', kind: 'acronym', definition_short: 'Refined definition.', salience: 0.85, first_mention: { segment_id: 'seg_0' }, mention_count: 2 } });
+    await flush();
+
+    expect(h.byId('concepts').children.length).toBe(2);
+    expect(h.byId('concepts-count').textContent).toBe('2');
+    expect(h.byId('concepts').textContent).toContain('Retrieval-Augmented Generation');
+    expect(h.byId('concepts').textContent).toContain('Refined definition.');
+    expect(h.byId('insights').textContent).toContain('Evaluate pgvector');
+    expect(h.byId('insights-count').textContent).toBe('1');
+    expect(h.byId('summary').textContent).toContain('vector databases');
+    expect(h.byId('summary').textContent).toContain('pgvector');
+  });
+
+  it('removes a concept card when it is retracted', async () => {
+    const h = loadClient();
+    await h.tick();
+    const ws = goLive(h);
+    env(ws, { message_type: 'concept_card', card: { id: 'cc_live_9', revision: 1, state: 'enriched', surface_form: 'X', canonical_name: 'Temp Concept', kind: 'concept', salience: 0.5, first_mention: { segment_id: 'seg_0' } } });
+    await flush();
+    expect(h.byId('concepts').textContent).toContain('Temp Concept');
+
+    env(ws, { message_type: 'concept_card', card: { id: 'cc_live_9', revision: 2, state: 'retracted', surface_form: 'X', canonical_name: 'Temp Concept', kind: 'concept', salience: 0.5, retraction: { reason: 'source_superseded', superseded_segment_id: 'seg_0', replacement_card_id: null } } });
+    await flush();
+    expect(h.byId('concepts').textContent).not.toContain('Temp Concept');
+    expect(h.byId('concepts-count').textContent).toBe('0');
+  });
+});
+
+describe('saved-session view renders persisted intelligence + export', () => {
+  function backend() {
+    const sessions = [{ id: 's-2', title: 'Pricing sync', artifact_count: 4, consent_class: 'standard', created_at_us: 2_000_000 }];
+    const quota = () => ({ tier: 'free', used: 1, limit: 5, retention_window_days: 7, exceeded: false });
+    return (url: string, init?: any) => {
+      const method = (init && init.method) || 'GET';
+      if (url === '/api/sessions' && method === 'GET') {
+        return { ok: true, status: 200, json: async () => ({ sessions: sessions.slice(), quota: quota() }) };
+      }
+      if (url.startsWith('/api/sessions/') && method === 'GET') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            session: sessions[0],
+            artifacts: [
+              { kind: 'transcript_segment', payload: { who: 'Alice', text: 'We should adopt RAG.' } },
+              { kind: 'concept_card', payload: { id: 'cc1', canonical_name: 'Retrieval-Augmented Generation', kind: 'acronym', definition_short: 'Retrieval plus generation.' } },
+              { kind: 'insight_item', payload: { id: 'i1', insight_type: 'action_item', text: 'Adopt pgvector', status: 'open' } },
+              { kind: 'session_summary', payload: { text: 'The team weighed RAG.', bullets: ['RAG chosen'] } },
+            ],
+          }),
+        };
+      }
+      if (url.startsWith('/api/session')) {
+        return { ok: true, status: 200, json: async () => ({ authenticated: true, account: { id: 'a', tier: 'free', display_name: 'Ada' }, identity: { provider: 'google', email: 'a@x', display_name: 'Ada' }, quota: quota(), providers: ['google'], authMode: 'real' }) };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    };
+  }
+
+  it('shows recap, concepts, insights, transcript, and an export button', async () => {
+    const h = loadClient({ fetch: backend() });
+    await h.tick();
+    h.nav.history.dispatch('click', { preventDefault() {} });
+    await h.tick();
+    (h.byId('modal-body').querySelector('.hist-open') as any).dispatch('click', {});
+    await h.tick();
+    const body = h.byId('modal-body');
+    expect(body.textContent).toContain('The team weighed RAG.'); // recap paragraph
+    expect(body.textContent).toContain('Retrieval-Augmented Generation'); // concept
+    expect(body.textContent).toContain('Adopt pgvector'); // insight
+    expect(body.textContent).toContain('We should adopt RAG.'); // transcript line
+    expect(body.querySelector('.hist-export')).toBeTruthy(); // Markdown export button
+  });
+});

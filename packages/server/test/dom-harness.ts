@@ -22,6 +22,9 @@ const CLIENT_PATH = fileURLToPath(new URL('../public/client.js', import.meta.url
 // order so client.js's rewired BYO-sources path (S0) runs exactly as in the browser.
 const SOURCES_PATH = fileURLToPath(new URL('../public/sources.js', import.meta.url));
 const OBSIDIAN_PATH = fileURLToPath(new URL('../public/obsidian.js', import.meta.url));
+// graph.js (window.AizenGraph) also loads before client.js in index.html; mirror it so
+// the knowledge-graph node popover (a click → the messages a node refers to) is testable.
+const GRAPH_PATH = fileURLToPath(new URL('../public/graph.js', import.meta.url));
 
 // Every id the client looks up via getElementById.
 const ID_LIST = [
@@ -30,6 +33,9 @@ const ID_LIST = [
   'transcript-search', 'conn-chip', 'sidebar', 'nav-toggle', 'nav-backdrop',
   'followup', 'followup-input', 'followup-send', 'followup-thread',
   'popout', 'card-stats', 'card-transcript', 'card-explanation', 'theme-toggle',
+  // live intelligence panels (concepts / insights / recap / knowledge graph)
+  'card-concepts', 'concepts', 'concepts-count', 'card-insights', 'insights', 'insights-count',
+  'card-summary', 'summary', 'summary-stamp', 'card-graph', 'graph', 'graph-expand',
   // account widget
   'account', 'acct-signin', 'signin-btn', 'acct-menu', 'acct-user', 'acct-chip',
   'acct-avatar', 'acct-name', 'acct-tier', 'acct-panel', 'acct-fullname',
@@ -339,6 +345,8 @@ export function loadClient(
   const doc: El = {
     nodeType: 9,
     createElement: (t: string) => makeEl(t, doc),
+    // graph.js builds its SVG with createElementNS; the harness ignores the namespace.
+    createElementNS: (_ns: string, t: string) => makeEl(t, doc),
     createTextNode: (t: unknown) => makeText(t),
     getElementById: (id: string) => byIdMap[id] || null,
     addEventListener: (t: string, fn: (ev: unknown) => void) => {
@@ -381,6 +389,21 @@ export function loadClient(
   grid.appendChild(byIdMap['card-explanation']);
   doc.body.appendChild(grid);
 
+  // Live intelligence cards — nest each render target + its count/stamp inside its
+  // card container (mirroring index.html), so focus-relocate has real parents.
+  const intel = makeEl('section', doc);
+  for (const [card, inner, badge] of [
+    ['card-concepts', 'concepts', 'concepts-count'],
+    ['card-insights', 'insights', 'insights-count'],
+    ['card-summary', 'summary', 'summary-stamp'],
+    ['card-graph', 'graph', 'graph-expand'],
+  ]) {
+    byIdMap[card!].appendChild(byIdMap[inner!]);
+    byIdMap[card!].appendChild(byIdMap[badge!]);
+    intel.appendChild(byIdMap[card!]);
+  }
+  doc.body.appendChild(intel);
+
   // Pop-out button carries a .btn-txt span (label toggles between Pop out/Return).
   const btnTxt = makeEl('span', doc);
   btnTxt.className = 'btn-txt';
@@ -411,6 +434,11 @@ export function loadClient(
   const navHistory = makeNavItem({ 'data-modal': 'history', 'data-target': 'card-stats' }, 'Saved sessions');
   const navProviders = makeNavItem({ 'data-modal': 'providers', 'data-target': 'status' }, 'Providers');
   const navSettings = makeNavItem({ 'data-modal': 'settings', 'data-target': 'card-stats' }, 'Settings');
+  // Live-intelligence nav items (focus popups for the concept/insight/recap/graph cards).
+  makeNavItem({ 'data-modal': 'concepts', 'data-target': 'card-concepts' }, 'Concepts');
+  makeNavItem({ 'data-modal': 'insights', 'data-target': 'card-insights' }, 'Insights');
+  makeNavItem({ 'data-modal': 'summary', 'data-target': 'card-summary' }, 'Recap');
+  makeNavItem({ 'data-modal': 'graph', 'data-target': 'card-graph' }, 'Knowledge graph');
   doc.body.appendChild(nav);
   // Modal overlay starts hidden (the real markup sets the `hidden` attribute).
   byIdMap['modal-overlay'].hidden = true;
@@ -540,9 +568,10 @@ export function loadClient(
     clearTimeout,
   });
 
-  // Load the S0 library + Obsidian seam first (they assign to window), then client.js.
+  // Load the S0 library + Obsidian seam + graph (they assign to window), then client.js.
   runInContext(readFileSync(SOURCES_PATH, 'utf8'), ctx);
   runInContext(readFileSync(OBSIDIAN_PATH, 'utf8'), ctx);
+  runInContext(readFileSync(GRAPH_PATH, 'utf8'), ctx);
   runInContext(readFileSync(CLIENT_PATH, 'utf8'), ctx);
 
   return {

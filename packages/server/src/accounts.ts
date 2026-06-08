@@ -58,6 +58,7 @@ const ARTIFACT_KINDS: ReadonlySet<StoredArtifact['kind']> = new Set([
   'kg_node',
   'kg_edge',
   'insight_item',
+  'session_summary',
 ]);
 
 /** The provenance families a stored source may carry (mirrors `StoredSource.origin`). */

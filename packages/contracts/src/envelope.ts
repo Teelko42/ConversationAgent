@@ -37,6 +37,10 @@ export const F02MessageTypeSchema = z.enum([
   'insight_item',
   'kg_delta',
   'kg_snapshot',
+  // Live "what you've missed" recap (live-intel worker). Additive: a periodic,
+  // best-effort summary that rides the same F02 envelope to the browser. NOT a
+  // Phase-0 artifact — it carries a `SessionSummary` payload (see session-summary.ts).
+  'session_summary',
 ]);
 export type F02MessageType = z.infer<typeof F02MessageTypeSchema>;
 

@@ -26,7 +26,7 @@ import {
   type LlmProvider,
 } from '@aizen/llm-gateway';
 import { makeWebSearchProvider, type WebSearchProvider } from '@aizen/research';
-import { explainSentence, answerFollowup, type ExplainHooks } from '@aizen/intel-worker';
+import { explainSentence, answerFollowup, runLiveIntel, type ExplainHooks } from '@aizen/intel-worker';
 import type { FollowupAnswer, SentenceExplanation, UserSource } from '@aizen/contracts';
 
 /** The hop-1 payload streamed ahead of the answer (see `ExplainHooks.onExplanation`). */
@@ -148,6 +148,14 @@ const TENANT_CEILING_USD = 5;
 const OPUS_CALL_CAP = 4;
 
 /**
+ * Separate, smaller budget for the always-on background intelligence (live-intel:
+ * concept cards + insights + recap + KG). Haiku-only (no Opus), metered apart from
+ * the answer path so continuous extraction degrades on its own ceiling without ever
+ * spending the user-facing explain/ask budget out from under it.
+ */
+const BACKGROUND_CEILING_USD = 3;
+
+/**
  * Hard ceiling on a single on-demand explain/follow-up. The engine already bounds
  * its own web-search + model calls, but this is the backstop that GUARANTEES the
  * WS handler always gets a reply to send: if anything upstream wedges past this, we
@@ -179,15 +187,21 @@ function withTimeout<T>(p: Promise<T>, ms: number, onTimeout: () => T): Promise<
   });
 }
 
-/** Build the LLM gateway: real Anthropic if keyed, else the deterministic stub. */
-function buildGateway(cfg: AppConfig): LlmGateway {
-  const provider: LlmProvider = cfg.anthropicApiKey
+/** Build the shared LLM provider: real Anthropic if keyed, else the deterministic stub. */
+function buildProvider(cfg: AppConfig): LlmProvider {
+  return cfg.anthropicApiKey
     ? new AnthropicProvider({ apiKey: cfg.anthropicApiKey })
     : new StubProvider();
-  return new LlmGateway(
-    provider,
-    new CostMeter({ tenantCeilingUsd: TENANT_CEILING_USD, opusCallCap: OPUS_CALL_CAP }),
-  );
+}
+
+/**
+ * Wrap a provider in a gateway with its OWN cost meter. The session builds two over
+ * one shared provider: the foreground gateway (explain/ask, the $5 answer budget) and
+ * a separate background gateway for the always-on live-intel worker — so continuous
+ * extraction can never spend the answer path's ceiling out from under it.
+ */
+function buildGateway(provider: LlmProvider, tenantCeilingUsd: number, opusCallCap: number): LlmGateway {
+  return new LlmGateway(provider, new CostMeter({ tenantCeilingUsd, opusCallCap }));
 }
 
 /** The demo clip: four speech frames + a closing endpoint (silence) frame. */
@@ -216,7 +230,10 @@ export async function createSession(
   }
 
   const bus = new InMemorySessionBus();
-  const gateway = buildGateway(cfg);
+  const provider = buildProvider(cfg);
+  const gateway = buildGateway(provider, TENANT_CEILING_USD, OPUS_CALL_CAP);
+  // Background intelligence gets its own gateway + meter (separate, smaller ceiling).
+  const bgGateway = buildGateway(provider, BACKGROUND_CEILING_USD, 0);
   const research: WebSearchProvider = makeWebSearchProvider({
     provider: cfg.webSearchProvider,
     tavilyApiKey: cfg.tavilyApiKey,
@@ -245,6 +262,20 @@ export async function createSession(
     if (isFinalTranscript(env)) rememberFinal(env.segment_id, env.text);
     onEnvelope(env);
   });
+
+  // Always-on LIVE intelligence (the "explains the room" layer): wired onto the SAME
+  // bus BEFORE any producer, so it sees every final and its concept_card / insight_item
+  // / kg_delta / session_summary envelopes are relayed to the browser by the forward
+  // subscriber above — no extra plumbing. Real-LLM only: the stub returns no JSON, so
+  // there is nothing to surface in demo mode (and no reason to spend the call). It runs
+  // on a SEPARATE background gateway/budget so it never starves the answer path.
+  const liveIntel =
+    status.llm === 'anthropic'
+      ? runLiveIntel(sessionId, bus, bgGateway, {
+          tenantId: cfg.tenantId,
+          consent: { consent_class: consent.consent_class, pii_present: consent.pii_present },
+        })
+      : undefined;
 
   let mode: 'live' | 'demo';
   let stream: StreamingSttHandle | undefined;
@@ -379,6 +410,10 @@ export async function createSession(
       capture?.stop();
       sttStub?.stop();
       if (stream) await stream.stop();
+      // Kick a best-effort final flush (card/recap the last things said), then await
+      // it so its envelopes are relayed before we unsubscribe the forwarder.
+      liveIntel?.stop();
+      await liveIntel?.drain();
       unsubForward();
     },
   };
