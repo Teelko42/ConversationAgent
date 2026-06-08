@@ -76,6 +76,7 @@
     insightsCount: document.getElementById('insights-count'),
     summary: document.getElementById('summary'),
     summaryStamp: document.getElementById('summary-stamp'),
+    summaryRefresh: document.getElementById('summary-refresh'),
     graph: document.getElementById('graph'),
     graphExpand: document.getElementById('graph-expand'),
     exportBtn: document.getElementById('export-btn'),
@@ -190,6 +191,11 @@
       }
       case 'session_summary': {
         if (env.summary) model.summary = env.summary;
+        if (recapPending) {
+          // The recap we asked for just landed — re-enable the "Catch me up" button.
+          if (recapTimer) clearTimeout(recapTimer);
+          setRecapBusy(false);
+        }
         scheduleRender('summary');
         break;
       }
@@ -267,6 +273,31 @@
         }),
       );
     }
+  }
+
+  // ---- on-demand recap ("Catch me up") -------------------------------------
+  // Ask the server to regenerate the "what you've missed" recap now instead of
+  // waiting for the cadence. The fresh recap arrives as a normal session_summary
+  // envelope, which clears the busy state (below). A timeout is the backstop so the
+  // button never sticks if no fresh recap comes (empty window / demo / capped LLM).
+  let recapPending = false;
+  let recapTimer = null;
+  function setRecapBusy(busy) {
+    recapPending = busy;
+    const btn = els.summaryRefresh;
+    if (!btn) return;
+    btn.disabled = busy;
+    btn.classList.toggle('is-busy', busy);
+    const txt = btn.querySelector('.btn-txt');
+    if (txt) txt.textContent = busy ? 'Catching up…' : 'Catch up';
+  }
+  function requestRecap() {
+    if (recapPending) return; // one in flight already
+    if (!ws || ws.readyState !== WebSocket.OPEN) return; // not connected — no-op
+    ws.send(JSON.stringify({ type: 'recap' }));
+    setRecapBusy(true);
+    if (recapTimer) clearTimeout(recapTimer);
+    recapTimer = setTimeout(() => setRecapBusy(false), 12000);
   }
 
   // ---- S0 / F2–F4: BYO source library + top-k retrieval --------------------
@@ -3604,6 +3635,7 @@
   if (els.modalClose) els.modalClose.addEventListener('click', closeModal);
   if (els.graphExpand) els.graphExpand.addEventListener('click', () => openModal('graph'));
   if (els.exportBtn) els.exportBtn.addEventListener('click', () => downloadMarkdown(buildLiveMarkdown()));
+  if (els.summaryRefresh) els.summaryRefresh.addEventListener('click', requestRecap);
   if (els.modalOverlay) {
     els.modalOverlay.addEventListener('click', (e) => {
       if (e.target === els.modalOverlay) closeModal(); // backdrop click only

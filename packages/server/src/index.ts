@@ -228,6 +228,11 @@ async function main(): Promise<void> {
       }
       if (msg.type === 'stop') {
         void session?.stop();
+      } else if (msg.type === 'recap') {
+        // The recap card's "Catch me up" button: regenerate the running summary now
+        // instead of waiting for the cadence. The fresh session_summary envelope is
+        // relayed to the browser by the same forward subscriber as every other one.
+        session?.recapNow();
       } else if (msg.type === 'explain' && msg.segment_id && msg.text) {
         const { segment_id, text, transcript } = msg;
         const userSources = coerceUserSources(msg.user_sources);

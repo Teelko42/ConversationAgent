@@ -42,6 +42,13 @@ export interface RunLiveIntelHandle {
   stop(): void;
   /** Await every in-flight extraction/summary call (the gateway is async). */
   drain(): Promise<void>;
+  /**
+   * Regenerate the "what you've missed" recap right now, bypassing the cadence
+   * gate (the user pressed "Catch me up"). No-op while a summary is already in
+   * flight, the window is empty, or the worker is stopped. Also resets the cadence
+   * clock, so the next scheduled recap is measured from this on-demand one.
+   */
+  summarizeNow(): void;
 }
 
 export interface RunLiveIntelOptions {
@@ -516,6 +523,10 @@ export function runLiveIntel(
     drain: async () => {
       while (inFlight.size > 0) await Promise.all([...inFlight]);
     },
+    // On-demand recap. runSummary() already guards against stopped / in-flight /
+    // empty-window, and resets lastSummaryAt + finalsSinceSummary, so pressing the
+    // button also re-bases the 12-finals / 60s cadence from this moment.
+    summarizeNow: () => runSummary(),
   };
 }
 

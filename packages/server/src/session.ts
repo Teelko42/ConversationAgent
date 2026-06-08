@@ -125,6 +125,13 @@ export interface SessionHandle {
     /** Per-request fast/web-search preferences (settings toggles). */
     options?: AnswerOptions,
   ): Promise<FollowupAnswer>;
+  /**
+   * On-demand: regenerate the "what you've missed" recap immediately, bypassing
+   * the live-intel cadence gate (driven by the recap card's "Catch me up" button).
+   * The fresh `session_summary` envelope is relayed to the browser like any other.
+   * No-op when live intelligence isn't running (demo mode / no Anthropic key).
+   */
+  recapNow(): void;
   stop(): Promise<void>;
 }
 
@@ -406,6 +413,7 @@ export async function createSession(
         }),
       );
     },
+    recapNow: () => liveIntel?.summarizeNow(),
     stop: async () => {
       capture?.stop();
       sttStub?.stop();

@@ -2654,6 +2654,32 @@ body.nav-open .nav-backdrop {
 .summary-card {
   margin-top: var(--gap);
 }
+/* Right-hand cluster of the recap head: the "Catch me up" button + the stamp. */
+.card-head-aside {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.summary-refresh {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+/* While the on-demand recap is regenerating: a gentle pulse over the disabled dim. */
+.summary-refresh.is-busy {
+  cursor: progress;
+  animation: summaryBusy 1.2s ease-in-out infinite;
+}
+@keyframes summaryBusy {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0.78;
+  }
+}
 #summary-stamp {
   text-transform: none;
   font-weight: 600;
