@@ -383,8 +383,13 @@ export function loadClient(
   doc.body.appendChild(statRow);
 
   // The two pop-out panels live inside a content grid in the body so restore has a
-  // real parent to return them to.
+  // real parent to return them to. Mirror index.html by nesting each card's render
+  // target (#transcript / #explanation) INSIDE its card, so a focus popup that
+  // relocates the whole card (moveFocusInto) carries the live render target with it —
+  // exactly as in the browser (e.g. a deep-dive that swaps to the Explanation popup).
   const grid = makeEl('section', doc);
+  byIdMap['card-transcript'].appendChild(byIdMap['transcript']);
+  byIdMap['card-explanation'].appendChild(byIdMap['explanation']);
   grid.appendChild(byIdMap['card-transcript']);
   grid.appendChild(byIdMap['card-explanation']);
   doc.body.appendChild(grid);

@@ -1207,9 +1207,14 @@
     const line = model.transcript.get(id);
     if (!line) return;
     selected = id;
-    // If a focus modal is open over the live cards, close it so the explanation panel
-    // (which may itself be relocated) is visible for the deep-dive.
-    if (openModalKind && FOCUS_SECTIONS[openModalKind]) closeModal();
+    // If a focus popup is open over the live cards (e.g. the user clicked an insight's
+    // "evidence" chip inside the Insights popup, or a sentence in the Transcript popup),
+    // SWAP it to the Explanation popup so the deep-dive lands front-and-centre. We used
+    // to closeModal() here, which dropped the breakdown into the dashboard's explanation
+    // card — almost always scrolled off-screen — so the click looked like it did nothing.
+    if (openModalKind && FOCUS_SECTIONS[openModalKind] && openModalKind !== 'explanation') {
+      openModal('explanation');
+    }
     const exState = model.explanations.get(id);
     if (exState && exState.state === 'done') {
       renderExplanation(exState.ex);
